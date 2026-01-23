@@ -43,28 +43,23 @@ Quickstart does all of this with a single command. Configure once, launch instan
 
 ## Quick Start (PowerShell - No Install Required)
 
-### 1. Run the proof-of-concept script:
+### 1. Run the interactive setup:
 
 ```powershell
-# From this directory
-.\scripts\quickstart.ps1 -ProjectsDir "C:\path\to\your\projects"
+.\scripts\quickstart.ps1 -Init
 ```
 
-### 2. Edit configuration in the script:
+This will ask you:
+- Where your projects folder is
+- How many terminal windows per monitor
 
-Open `scripts/quickstart.ps1` and modify the `$Config` section:
+### 2. Or run with parameters:
 
 ```powershell
-$Config = @{
-    ProjectsDir = "C:\Users\you\dev"
-    PostCommand = "claude --dangerously-skip-permissions"
+# Specify your projects folder and window layout
+.\scripts\quickstart.ps1 -ProjectsDir "C:\dev" -Windows "1,2,4"
 
-    Monitors = @{
-        0 = @{ Windows = 4; Layout = "grid" }      # Monitor 1: 4 windows
-        1 = @{ Windows = 2; Layout = "vertical" }  # Monitor 2: 2 windows
-        2 = @{ Windows = 1; Layout = "full" }      # Monitor 3: 1 window
-    }
-}
+# This means: 1 window on monitor 1, 2 on monitor 2, 4 on monitor 3
 ```
 
 ### 3. Optional: Install fzf for better project selection

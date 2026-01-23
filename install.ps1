@@ -44,11 +44,17 @@ if ($userPath -notlike "*$installDir*") {
 Write-Host ""
 Write-Host "  Installation complete!" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Usage:" -ForegroundColor White
-Write-Host "    quickstart                    # Launch with default config"
-Write-Host "    quickstart -Windows '1,2,4'   # Custom: 1 window, 2 windows, 4 windows"
-Write-Host "    quickstart -Init              # Interactive setup"
-Write-Host "    quickstart -List              # Show monitors"
+Write-Host "  FIRST TIME SETUP:" -ForegroundColor Yellow
+Write-Host "    quickstart -Init              # Interactive setup (recommended)"
 Write-Host ""
-Write-Host "  Projects directory: $env:USERPROFILE\.1dev (edit script to change)"
+Write-Host "  Or specify settings directly:" -ForegroundColor White
+Write-Host "    quickstart -ProjectsDir 'C:\dev' -Windows '1,2,4'"
+Write-Host ""
+Write-Host "  Examples:" -ForegroundColor White
+Write-Host "    -Windows '1'       # 1 window on 1 monitor"
+Write-Host "    -Windows '1,2'     # 1 window + 2 windows on 2 monitors"
+Write-Host "    -Windows '1,2,4'   # 1 + 2 + 4 windows on 3 monitors"
+Write-Host ""
+Write-Host "  Other commands:" -ForegroundColor White
+Write-Host "    quickstart -List              # Show detected monitors"
 Write-Host ""

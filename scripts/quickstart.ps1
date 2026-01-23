@@ -3,7 +3,7 @@
 # Each terminal opens a project picker and then runs Claude Code
 
 param(
-    [string]$ProjectsDir = "$env:USERPROFILE\.1dev",
+    [string]$ProjectsDir = "",       # Will prompt if not set (no default assumption)
     [string]$PostCommand = "claude --dangerously-skip-permissions",
     [string]$Windows = "",           # Override: "1,2,4" means 1 on monitor 1, 2 on monitor 2, etc.
     [switch]$Init,                   # Run interactive setup
@@ -15,12 +15,14 @@ param(
 # Configuration
 # ============================================================================
 
-# Default monitor config (edit this for your setup, or use -Windows parameter)
+# Default monitor config: 1 window per monitor (safe default for any setup)
+# Users should run with -Init or -Windows to customize for their setup
 # Format: @{ MonitorIndex = @{ Windows = N; Layout = "grid"|"vertical"|"horizontal"|"full" } }
 $DefaultMonitorConfig = @{
-    0 = @{ Windows = 1; Layout = "full" }       # Monitor 1 (usually laptop/primary)
-    1 = @{ Windows = 2; Layout = "vertical" }   # Monitor 2
-    2 = @{ Windows = 4; Layout = "grid" }       # Monitor 3
+    0 = @{ Windows = 1; Layout = "full" }       # Monitor 1: 1 maximized window
+    1 = @{ Windows = 1; Layout = "full" }       # Monitor 2: 1 maximized window
+    2 = @{ Windows = 1; Layout = "full" }       # Monitor 3: 1 maximized window
+    3 = @{ Windows = 1; Layout = "full" }       # Monitor 4: 1 maximized window (if exists)
 }
 
 # Build config - can be overridden by -Windows parameter
@@ -392,8 +394,8 @@ if ($Init) {
     Write-Host ""
 
     # Ask for projects directory
-    $defaultDir = "$env:USERPROFILE\.1dev"
-    $inputDir = Read-Host "  Projects directory [$defaultDir]"
+    $defaultDir = "$env:USERPROFILE\dev"
+    $inputDir = Read-Host "  Projects directory (where your project folders are) [$defaultDir]"
     if ($inputDir -eq "") { $inputDir = $defaultDir }
 
     # Ask for windows per monitor
@@ -401,7 +403,7 @@ if ($Init) {
     Write-Host "  How many terminal windows on each monitor?" -ForegroundColor White
     $windowConfig = @()
     for ($i = 0; $i -lt $monitors.Count; $i++) {
-        $default = if ($i -eq 0) { 1 } elseif ($i -eq 1) { 2 } else { 4 }
+        $default = 1  # Default to 1 window per monitor
         $input = Read-Host "    Monitor $($i + 1) [$default]"
         if ($input -eq "") { $input = $default }
         $windowConfig += $input
@@ -430,11 +432,19 @@ if ($Init) {
 }
 
 
-# Validate projects directory
-if (-not (Test-Path $Config.ProjectsDir)) {
-    Write-Host "  Error: Projects directory not found: $($Config.ProjectsDir)" -ForegroundColor Red
-    Write-Host "  Please edit the script and set the correct ProjectsDir" -ForegroundColor Yellow
-    exit 1
+# Validate projects directory - prompt if not set or doesn't exist
+if ($Config.ProjectsDir -eq "" -or -not (Test-Path $Config.ProjectsDir)) {
+    if ($Config.ProjectsDir -ne "") {
+        Write-Host "  Projects directory not found: $($Config.ProjectsDir)" -ForegroundColor Yellow
+    }
+    Write-Host ""
+    $inputDir = Read-Host "  Enter your projects directory (e.g., C:\dev, C:\Users\you\projects)"
+    if ($inputDir -eq "" -or -not (Test-Path $inputDir)) {
+        Write-Host "  Error: Valid projects directory required" -ForegroundColor Red
+        Write-Host "  Run 'quickstart -Init' for guided setup" -ForegroundColor Yellow
+        exit 1
+    }
+    $Config.ProjectsDir = $inputDir
 }
 
 $projectCount = (Get-ChildItem -Path $Config.ProjectsDir -Directory).Count
