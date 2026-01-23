@@ -287,25 +287,26 @@ if ($Init) {
     Write-Host "  Where are your project folders located?"
     Write-Host "  (This is the folder containing all your project subfolders)"
     Write-Host ""
-    Write-Host "  Example: C:\dev" -ForegroundColor Gray
-    Write-Host ""
-    $inputDir = Read-Host "  Projects directory"
 
-    # Check for null or empty
-    if ([string]::IsNullOrWhiteSpace($inputDir)) {
-        Write-Host "  Error: Projects directory is required" -ForegroundColor Red
-        exit 1
-    }
+    $inputDir = $null
+    while ([string]::IsNullOrWhiteSpace($inputDir)) {
+        $inputDir = Read-Host "  Projects directory (e.g., C:\dev)"
 
-    if (-not (Test-Path -Path $inputDir -ErrorAction SilentlyContinue)) {
-        Write-Host "  Directory doesn't exist. Create it? [Y/n]" -ForegroundColor Yellow
-        $create = Read-Host
-        if ([string]::IsNullOrWhiteSpace($create) -or $create -eq "y" -or $create -eq "Y") {
-            New-Item -ItemType Directory -Path $inputDir -Force | Out-Null
-            Write-Host "  Created: $inputDir" -ForegroundColor Green
-        } else {
-            Write-Host "  Error: Projects directory must exist" -ForegroundColor Red
-            exit 1
+        if ([string]::IsNullOrWhiteSpace($inputDir)) {
+            Write-Host "  Please enter a directory path" -ForegroundColor Yellow
+            continue
+        }
+
+        if (-not (Test-Path -Path $inputDir -ErrorAction SilentlyContinue)) {
+            Write-Host "  Directory doesn't exist. Create it? [Y/n]" -ForegroundColor Yellow
+            $create = Read-Host
+            if ([string]::IsNullOrWhiteSpace($create) -or $create -eq "y" -or $create -eq "Y") {
+                New-Item -ItemType Directory -Path $inputDir -Force | Out-Null
+                Write-Host "  Created: $inputDir" -ForegroundColor Green
+            } else {
+                Write-Host "  Please enter an existing directory" -ForegroundColor Yellow
+                $inputDir = $null
+            }
         }
     }
 
