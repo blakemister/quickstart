@@ -74,14 +74,14 @@ Test-Assert ($scriptContent -match 'GetMonitorInfo') "Uses GetMonitorInfo API"
 Test-Assert ($scriptContent -match 'rcWork') "Uses work area (not full monitor bounds)"
 
 # ============================================================================
-# Test 6: Pane splitting support
+# Test 6: Window positioning support
 # ============================================================================
 Write-Host ""
-Write-Host "  Test: Pane splitting support" -ForegroundColor Yellow
+Write-Host "  Test: Window positioning support" -ForegroundColor Yellow
 
-Test-Assert ($scriptContent -match 'sp -V') "Supports vertical split"
-Test-Assert ($scriptContent -match 'sp -H') "Supports horizontal split"
-Test-Assert ($scriptContent -match 'mf left') "Supports move focus for grid layout"
+Test-Assert ($scriptContent -match 'Get-WindowPositions') "Has window position calculator"
+Test-Assert ($scriptContent -match 'SetWindowPos') "Uses SetWindowPos for window placement"
+Test-Assert ($scriptContent -match 'FindWindowByTitle') "Finds windows by title for positioning"
 
 # ============================================================================
 # Test 7: -List shows usage

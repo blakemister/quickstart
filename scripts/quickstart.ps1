@@ -209,13 +209,77 @@ if (`$selected) {
     return $scriptPath
 }
 
-# Launch terminal(s) on a monitor using WT's native pane splitting
+# Calculate grid positions for windows on a monitor
+function Get-WindowPositions {
+    param(
+        [MonitorInfo]$Monitor,
+        [int]$WindowCount
+    )
+
+    $positions = @()
+
+    # Windows 10/11 has invisible borders (about 7px on each side)
+    $borderSize = 7
+
+    if ($WindowCount -eq 1) {
+        # Single window - full screen
+        $positions += @{
+            X = $Monitor.X - $borderSize
+            Y = $Monitor.Y
+            Width = $Monitor.Width + ($borderSize * 2)
+            Height = $Monitor.Height + $borderSize
+        }
+    }
+    elseif ($WindowCount -eq 2) {
+        # 2 windows side by side
+        $halfWidth = [math]::Floor($Monitor.Width / 2)
+        for ($i = 0; $i -lt 2; $i++) {
+            $positions += @{
+                X = $Monitor.X + ($i * $halfWidth) - $borderSize
+                Y = $Monitor.Y
+                Width = $halfWidth + ($borderSize * 2)
+                Height = $Monitor.Height + $borderSize
+            }
+        }
+    }
+    elseif ($WindowCount -eq 4) {
+        # 2x2 grid
+        $halfWidth = [math]::Floor($Monitor.Width / 2)
+        $halfHeight = [math]::Floor($Monitor.Height / 2)
+        for ($row = 0; $row -lt 2; $row++) {
+            for ($col = 0; $col -lt 2; $col++) {
+                $positions += @{
+                    X = $Monitor.X + ($col * $halfWidth) - $borderSize
+                    Y = $Monitor.Y + ($row * $halfHeight)
+                    Width = $halfWidth + ($borderSize * 2)
+                    Height = $halfHeight + $borderSize
+                }
+            }
+        }
+    }
+    else {
+        # Fallback: arrange in a row
+        $windowWidth = [math]::Floor($Monitor.Width / $WindowCount)
+        for ($i = 0; $i -lt $WindowCount; $i++) {
+            $positions += @{
+                X = $Monitor.X + ($i * $windowWidth) - $borderSize
+                Y = $Monitor.Y
+                Width = $windowWidth + ($borderSize * 2)
+                Height = $Monitor.Height + $borderSize
+            }
+        }
+    }
+
+    return $positions
+}
+
+# Launch separate terminal windows on a monitor
 function Start-MonitorTerminals {
     param(
         [string]$WindowName,
         [string]$WorkingDir,
         [MonitorInfo]$Monitor,
-        [int]$PaneCount,
+        [int]$WindowCount,
         [string]$Layout,
         [string]$PostCommand
     )
@@ -223,71 +287,33 @@ function Start-MonitorTerminals {
     # Write picker script to temp file (avoids WT escaping issues)
     $pickerScript = Write-PickerScript -WorkingDir $WorkingDir -PostCommand $PostCommand
 
-    # Position on correct monitor by using --pos with a point inside that monitor
-    $posX = $Monitor.X + 100
-    $posY = $Monitor.Y + 100
+    # Get positions for each window
+    $positions = Get-WindowPositions -Monitor $Monitor -WindowCount $WindowCount
 
-    # Base command to run the picker script
-    $paneCmd = "powershell -ExecutionPolicy Bypass -NoExit -File `"$pickerScript`""
+    # Launch each window
+    for ($i = 0; $i -lt $WindowCount; $i++) {
+        $pos = $positions[$i]
+        $title = "$WindowName-$($i + 1)"
 
-    if ($PaneCount -eq 1) {
-        # Single pane - just maximize on the monitor
-        $wtArgs = "--pos $posX,$posY -M --title `"$WindowName`" $paneCmd"
+        # Launch window at a point inside the target monitor
+        $launchX = $Monitor.X + 100
+        $launchY = $Monitor.Y + 100
+
+        $wtArgs = "--pos $launchX,$launchY --title `"$title`" powershell -ExecutionPolicy Bypass -NoExit -File `"$pickerScript`""
         Start-Process "wt" -ArgumentList $wtArgs
+
+        # Wait for window to open
+        Start-Sleep -Milliseconds 600
+
+        # Find and resize the window
+        $hwnd = [WinAPI]::FindWindowByTitle($title)
+        if ($hwnd -ne [IntPtr]::Zero) {
+            [WinAPI]::SetWindowPos($hwnd, [IntPtr]::Zero, $pos.X, $pos.Y, $pos.Width, $pos.Height, 0x0044) | Out-Null
+        }
     }
-    else {
-        # Multiple panes - build a command with splits
-        # WT uses ; to separate commands, sp for split-pane
-        # -V = vertical split (side by side), -H = horizontal split (stacked)
-
-        $wtCmd = "--pos $posX,$posY -M --title `"$WindowName`" $paneCmd"
-
-        if ($Layout -eq "vertical" -or $PaneCount -eq 2) {
-            # 2 panes side by side
-            for ($i = 1; $i -lt $PaneCount; $i++) {
-                $wtCmd += " `; sp -V $paneCmd"
-            }
-        }
-        elseif ($Layout -eq "horizontal") {
-            # Stacked horizontally
-            for ($i = 1; $i -lt $PaneCount; $i++) {
-                $wtCmd += " `; sp -H $paneCmd"
-            }
-        }
-        elseif ($Layout -eq "grid") {
-            # Grid layout: 4 panes = 2x2, 6 panes = 2x3, etc.
-            if ($PaneCount -eq 4) {
-                # Create 2x2 grid: split vertical, then split each horizontal
-                $wtCmd = "--pos $posX,$posY -M --title `"$WindowName`" $paneCmd"
-                $wtCmd += " `; sp -V $paneCmd"
-                $wtCmd += " `; mf left `; sp -H $paneCmd"
-                $wtCmd += " `; mf right `; sp -H $paneCmd"
-            }
-            elseif ($PaneCount -eq 6) {
-                # 2x3 grid
-                $wtCmd = "--pos $posX,$posY -M --title `"$WindowName`" $paneCmd"
-                $wtCmd += " `; sp -V $paneCmd"
-                $wtCmd += " `; sp -V $paneCmd"
-                $wtCmd += " `; mf first `; sp -H $paneCmd"
-                $wtCmd += " `; mf previous `; sp -H $paneCmd"
-                $wtCmd += " `; mf last `; sp -H $paneCmd"
-            }
-            else {
-                # Fallback: just do vertical splits
-                for ($i = 1; $i -lt $PaneCount; $i++) {
-                    $wtCmd += " `; sp -V $paneCmd"
-                }
-            }
-        }
-
-        Start-Process "wt" -ArgumentList $wtCmd
-    }
-
-    # Brief pause to let window open
-    Start-Sleep -Milliseconds 800
 
     if ($Verbose) {
-        Write-Host "  Launched '$WindowName' with $PaneCount pane(s) on monitor at ($($Monitor.X), $($Monitor.Y))"
+        Write-Host "  Launched $WindowCount window(s) on monitor at ($($Monitor.X), $($Monitor.Y))"
     }
 }
 
@@ -414,7 +440,7 @@ Write-Host "  Projects directory: $($Config.ProjectsDir) ($projectCount projects
 Write-Host ""
 
 # Launch terminals on each monitor
-$totalPanes = 0
+$totalWindows = 0
 foreach ($monitorIndex in $Config.Monitors.Keys | Sort-Object) {
     if ($monitorIndex -ge $monitors.Count) {
         continue  # Skip if monitor doesn't exist
@@ -422,25 +448,25 @@ foreach ($monitorIndex in $Config.Monitors.Keys | Sort-Object) {
 
     $monitorConfig = $Config.Monitors[$monitorIndex]
     $monitor = $monitors[$monitorIndex]
-    $paneCount = $monitorConfig.Windows
+    $windowCount = $monitorConfig.Windows
     $layout = $monitorConfig.Layout
 
-    Write-Host "  Monitor $($monitorIndex + 1): Launching $paneCount pane(s)" -ForegroundColor Green
+    Write-Host "  Monitor $($monitorIndex + 1): Launching $windowCount window(s)" -ForegroundColor Green
 
     Start-MonitorTerminals `
         -WindowName "Quickstart-Monitor$($monitorIndex + 1)" `
         -WorkingDir $Config.ProjectsDir `
         -Monitor $monitor `
-        -PaneCount $paneCount `
+        -WindowCount $windowCount `
         -Layout $layout `
         -PostCommand $Config.PostCommand
 
-    $totalPanes += $paneCount
+    $totalWindows += $windowCount
 
     # Delay between monitors
     Start-Sleep -Milliseconds 500
 }
 
 Write-Host ""
-Write-Host "  Launched $totalPanes total pane(s) across $($monitors.Count) monitor(s)" -ForegroundColor Cyan
+Write-Host "  Launched $totalWindows total window(s) across $($monitors.Count) monitor(s)" -ForegroundColor Cyan
 Write-Host ""
