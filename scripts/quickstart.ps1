@@ -5,28 +5,39 @@
 param(
     [string]$ProjectsDir = "$env:USERPROFILE\.1dev",
     [string]$PostCommand = "claude --dangerously-skip-permissions",
-    [int]$TotalWindows = 3,
+    [string]$Windows = "",           # Override: "1,2,4" means 1 on monitor 1, 2 on monitor 2, etc.
+    [switch]$Init,                   # Run interactive setup
+    [switch]$List,                   # Just list monitors and exit
     [switch]$Verbose
 )
 
 # ============================================================================
-# Configuration - Edit these to match your setup!
+# Configuration
 # ============================================================================
 
+# Default monitor config (edit this for your setup, or use -Windows parameter)
+# Format: @{ MonitorIndex = @{ Windows = N; Layout = "grid"|"vertical"|"horizontal"|"full" } }
+$DefaultMonitorConfig = @{
+    0 = @{ Windows = 1; Layout = "full" }       # Monitor 1 (usually laptop/primary)
+    1 = @{ Windows = 2; Layout = "vertical" }   # Monitor 2
+    2 = @{ Windows = 4; Layout = "grid" }       # Monitor 3
+}
+
+# Build config - can be overridden by -Windows parameter
 $Config = @{
-    # Your projects directory
     ProjectsDir = $ProjectsDir
-
-    # Command to run after selecting a project
     PostCommand = $PostCommand
+    Monitors = $DefaultMonitorConfig
+}
 
-    # Monitor configuration (sorted left to right by screen position)
-    # Format: @{ MonitorIndex = @{ Windows = N; Layout = "grid"|"vertical"|"horizontal" } }
-    # Your setup: Laptop (left) | Monitor (middle) | TV (right)
-    Monitors = @{
-        0 = @{ Windows = 1; Layout = "full" }       # Laptop: 1 fullscreen window
-        1 = @{ Windows = 2; Layout = "vertical" }   # Monitor: 2 windows side by side
-        2 = @{ Windows = 4; Layout = "grid" }       # TV: 4 windows in 2x2 grid
+# Override monitor config if -Windows parameter provided (e.g., "1,2,4")
+if ($Windows -ne "") {
+    $windowCounts = $Windows -split ","
+    $Config.Monitors = @{}
+    for ($i = 0; $i -lt $windowCounts.Count; $i++) {
+        $count = [int]$windowCounts[$i]
+        $layout = if ($count -eq 1) { "full" } elseif ($count -le 2) { "vertical" } else { "grid" }
+        $Config.Monitors[$i] = @{ Windows = $count; Layout = $layout }
     }
 }
 
@@ -40,14 +51,23 @@ using System.Runtime.InteropServices;
 using System.Collections.Generic;
 
 public class MonitorInfo {
+    // Full monitor bounds
     public int Left;
     public int Top;
     public int Right;
     public int Bottom;
+    // Work area (excludes taskbar)
+    public int WorkLeft;
+    public int WorkTop;
+    public int WorkRight;
+    public int WorkBottom;
     public bool IsPrimary;
 
-    public int Width { get { return Right - Left; } }
-    public int Height { get { return Bottom - Top; } }
+    public int Width { get { return WorkRight - WorkLeft; } }
+    public int Height { get { return WorkBottom - WorkTop; } }
+    // Use work area for positioning (accounts for taskbar)
+    public int X { get { return WorkLeft; } }
+    public int Y { get { return WorkTop; } }
 }
 
 public class WinAPI {
@@ -108,6 +128,11 @@ public class WinAPI {
                         Top = mi.rcMonitor.Top,
                         Right = mi.rcMonitor.Right,
                         Bottom = mi.rcMonitor.Bottom,
+                        // Use work area (excludes taskbar) for better window placement
+                        WorkLeft = mi.rcWork.Left,
+                        WorkTop = mi.rcWork.Top,
+                        WorkRight = mi.rcWork.Right,
+                        WorkBottom = mi.rcWork.Bottom,
                         IsPrimary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0
                     });
                 }
@@ -173,8 +198,8 @@ function Get-WindowPositions {
                 $col = $i % $cols
 
                 $positions += @{
-                    X = $Monitor.Left + ($col * $cellWidth)
-                    Y = $Monitor.Top + ($row * $cellHeight)
+                    X = $Monitor.X + ($col * $cellWidth)
+                    Y = $Monitor.Y + ($row * $cellHeight)
                     Width = $cellWidth
                     Height = $cellHeight
                 }
@@ -185,8 +210,8 @@ function Get-WindowPositions {
 
             for ($i = 0; $i -lt $WindowCount; $i++) {
                 $positions += @{
-                    X = $Monitor.Left + ($i * $cellWidth)
-                    Y = $Monitor.Top
+                    X = $Monitor.X + ($i * $cellWidth)
+                    Y = $Monitor.Y
                     Width = $cellWidth
                     Height = $Monitor.Height
                 }
@@ -197,8 +222,8 @@ function Get-WindowPositions {
 
             for ($i = 0; $i -lt $WindowCount; $i++) {
                 $positions += @{
-                    X = $Monitor.Left
-                    Y = $Monitor.Top + ($i * $cellHeight)
+                    X = $Monitor.X
+                    Y = $Monitor.Y + ($i * $cellHeight)
                     Width = $Monitor.Width
                     Height = $cellHeight
                 }
@@ -206,8 +231,8 @@ function Get-WindowPositions {
         }
         "full" {
             $positions += @{
-                X = $Monitor.Left
-                Y = $Monitor.Top
+                X = $Monitor.X
+                Y = $Monitor.Y
                 Width = $Monitor.Width
                 Height = $Monitor.Height
             }
@@ -340,9 +365,65 @@ Write-Host "  Detected $($monitors.Count) monitor(s):" -ForegroundColor White
 for ($i = 0; $i -lt $monitors.Count; $i++) {
     $m = $monitors[$i]
     $primary = if ($m.IsPrimary) { " (Primary)" } else { "" }
-    Write-Host "    Monitor $($i + 1): $($m.Width)x$($m.Height) at ($($m.Left), $($m.Top))$primary"
+    Write-Host "    Monitor $($i + 1): $($m.Width)x$($m.Height) work area$primary"
 }
 Write-Host ""
+
+# Handle --List: just show monitors and exit
+if ($List) {
+    Write-Host "  Usage: quickstart.ps1 -Windows '1,2,4' -ProjectsDir 'C:\dev'" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Example configurations:" -ForegroundColor White
+    Write-Host "    -Windows '1'       # 1 window on monitor 1"
+    Write-Host "    -Windows '1,2'     # 1 on monitor 1, 2 on monitor 2"
+    Write-Host "    -Windows '1,2,4'   # 1 on monitor 1, 2 on monitor 2, 4 on monitor 3"
+    Write-Host ""
+    exit 0
+}
+
+# Handle --Init: interactive setup
+if ($Init) {
+    Write-Host "  Interactive Setup" -ForegroundColor Green
+    Write-Host ""
+
+    # Ask for projects directory
+    $defaultDir = "$env:USERPROFILE\.1dev"
+    $inputDir = Read-Host "  Projects directory [$defaultDir]"
+    if ($inputDir -eq "") { $inputDir = $defaultDir }
+
+    # Ask for windows per monitor
+    Write-Host ""
+    Write-Host "  How many terminal windows on each monitor?" -ForegroundColor White
+    $windowConfig = @()
+    for ($i = 0; $i -lt $monitors.Count; $i++) {
+        $default = if ($i -eq 0) { 1 } elseif ($i -eq 1) { 2 } else { 4 }
+        $input = Read-Host "    Monitor $($i + 1) [$default]"
+        if ($input -eq "") { $input = $default }
+        $windowConfig += $input
+    }
+
+    $windowsParam = $windowConfig -join ","
+
+    Write-Host ""
+    Write-Host "  To launch with this config, run:" -ForegroundColor Green
+    Write-Host "    .\quickstart.ps1 -ProjectsDir '$inputDir' -Windows '$windowsParam'" -ForegroundColor Yellow
+    Write-Host ""
+
+    # Ask if they want to launch now
+    $launch = Read-Host "  Launch now? [Y/n]"
+    if ($launch -eq "" -or $launch.ToLower() -eq "y") {
+        $Config.ProjectsDir = $inputDir
+        $Config.Monitors = @{}
+        for ($i = 0; $i -lt $windowConfig.Count; $i++) {
+            $count = [int]$windowConfig[$i]
+            $layout = if ($count -eq 1) { "full" } elseif ($count -le 2) { "vertical" } else { "grid" }
+            $Config.Monitors[$i] = @{ Windows = $count; Layout = $layout }
+        }
+    } else {
+        exit 0
+    }
+}
+
 
 # Validate projects directory
 if (-not (Test-Path $Config.ProjectsDir)) {
