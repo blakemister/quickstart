@@ -39,6 +39,7 @@ $scriptContent = Get-Content $scriptPath -Raw
 Test-Assert (-not ($scriptContent -match "bcmister")) "No 'bcmister' in script"
 Test-Assert (-not ($scriptContent -match "\\\.1dev")) "No '.1dev' hardcoded path in script"
 Test-Assert (-not ($scriptContent -match "C:\\Users\\[A-Za-z]+\\")) "No hardcoded user paths"
+Test-Assert (-not ($scriptContent -match '\$env:USERPROFILE\\dev')) "No default projects directory suggestion"
 
 # ============================================================================
 # Test 3: Default config is generic

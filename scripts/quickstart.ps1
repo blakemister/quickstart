@@ -284,10 +284,15 @@ if ($Init) {
     Write-Host "  Interactive Setup" -ForegroundColor Green
     Write-Host ""
 
-    $defaultDir = "$env:USERPROFILE\dev"
     Write-Host "  Where are your project folders located?"
-    $inputDir = Read-Host "  Projects directory [$defaultDir]"
-    if ($inputDir -eq "") { $inputDir = $defaultDir }
+    Write-Host "  (This is the folder containing all your project subfolders)"
+    Write-Host ""
+    $inputDir = Read-Host "  Projects directory"
+
+    if ($inputDir -eq "") {
+        Write-Host "  Error: Projects directory is required" -ForegroundColor Red
+        exit 1
+    }
 
     if (-not (Test-Path $inputDir)) {
         Write-Host "  Directory doesn't exist. Create it? [Y/n]" -ForegroundColor Yellow
