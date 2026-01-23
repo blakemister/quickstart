@@ -95,6 +95,11 @@ func RunInitWizard() error {
 	homeDir, _ := os.UserHomeDir()
 	defaultProjectsDir := filepath.Join(homeDir, ".1dev")
 
+	// Display user's home folder for easy copying
+	fmt.Println("Your home folder:")
+	fmt.Printf("  %s\\\n", homeDir)
+	fmt.Println()
+
 	fmt.Printf("Where are your projects located? [%s]: ", defaultProjectsDir)
 	projectsDir, _ := reader.ReadString('\n')
 	projectsDir = strings.TrimSpace(projectsDir)

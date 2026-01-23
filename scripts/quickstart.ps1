@@ -360,13 +360,19 @@ if ($Init) {
     Write-Host "  Interactive Setup" -ForegroundColor Green
     Write-Host ""
 
+    # Display user's home folder for easy copying
+    $homeFolder = $env:USERPROFILE
+    Write-Host "  Your home folder:" -ForegroundColor White
+    Write-Host "    $homeFolder\" -ForegroundColor Yellow
+    Write-Host ""
+
     Write-Host "  Where are your project folders located?"
     Write-Host "  (This is the folder containing all your project subfolders)"
     Write-Host ""
 
     $inputDir = $null
     while ([string]::IsNullOrWhiteSpace($inputDir)) {
-        $inputDir = Read-Host "  Projects directory (e.g., C:\dev)"
+        $inputDir = Read-Host "  Projects directory (e.g., C:\Users\userfolder\projects)"
 
         if ([string]::IsNullOrWhiteSpace($inputDir)) {
             Write-Host "  Please enter a directory path" -ForegroundColor Yellow
@@ -391,7 +397,7 @@ if ($Init) {
     $windowConfig = @()
     for ($i = 0; $i -lt $monitors.Count; $i++) {
         $m = $monitors[$i]
-        $input = Read-Host "    Monitor $($i + 1) ($($m.Width)x$($m.Height)) [1]"
+        $input = Read-Host "    Monitor $($i + 1) ($($m.Width)x$($m.Height))"
         if ([string]::IsNullOrWhiteSpace($input)) { $input = "1" }
         $windowConfig += $input
     }
@@ -425,7 +431,9 @@ if ($needsProjectsDir) {
         Write-Host "  Projects directory not found: $($Config.ProjectsDir)" -ForegroundColor Yellow
     }
     Write-Host ""
-    $inputDir = Read-Host "  Enter your projects directory (e.g., C:\dev)"
+    Write-Host "  Your home folder: $env:USERPROFILE\" -ForegroundColor Yellow
+    Write-Host ""
+    $inputDir = Read-Host "  Enter your projects directory (e.g., C:\Users\userfolder\projects)"
 
     if ([string]::IsNullOrWhiteSpace($inputDir)) {
         Write-Host "  Error: Projects directory is required" -ForegroundColor Red
