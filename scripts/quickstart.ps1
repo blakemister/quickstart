@@ -178,22 +178,16 @@ if (`$projects.Count -eq 0) {
     exit
 }
 
-`$hasFzf = Get-Command fzf -ErrorAction SilentlyContinue
-
-if (`$hasFzf) {
-    `$selected = `$projects | fzf --height=80% --reverse --border --prompt='Select project: '
-} else {
-    Write-Host ''
-    Write-Host '  Select a Project' -ForegroundColor Cyan
-    Write-Host ''
-    for (`$i = 0; `$i -lt `$projects.Count; `$i++) {
-        Write-Host ('  [' + (`$i + 1) + '] ' + `$projects[`$i])
-    }
-    Write-Host ''
-    `$num = Read-Host '  Number'
-    if (`$num -match '^\d+`$' -and [int]`$num -ge 1 -and [int]`$num -le `$projects.Count) {
-        `$selected = `$projects[[int]`$num - 1]
-    }
+Write-Host ''
+Write-Host '  Select a Project' -ForegroundColor Cyan
+Write-Host ''
+for (`$i = 0; `$i -lt `$projects.Count; `$i++) {
+    Write-Host ('  [' + (`$i + 1) + '] ' + `$projects[`$i])
+}
+Write-Host ''
+`$num = Read-Host '  Number'
+if (`$num -match '^\d+`$' -and [int]`$num -ge 1 -and [int]`$num -le `$projects.Count) {
+    `$selected = `$projects[[int]`$num - 1]
 }
 
 if (`$selected) {
