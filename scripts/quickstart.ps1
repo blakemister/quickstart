@@ -160,14 +160,53 @@ function Get-Monitors {
     return [WinAPI]::GetMonitors()
 }
 
-function Get-PickerCommand {
+function Write-PickerScript {
     param([string]$WorkingDir, [string]$PostCommand)
 
-    # Create a compact picker script
-    $script = @"
-cd '$WorkingDir'; `$p = Get-ChildItem -Directory | Select-Object -ExpandProperty Name; `$f = Get-Command fzf -EA SilentlyContinue; if (`$f) { `$s = `$p | fzf --height=80% --reverse --border --prompt='Select project: ' } else { Write-Host ''; Write-Host '  Select a Project' -ForegroundColor Cyan; for (`$i=0; `$i -lt `$p.Count; `$i++) { Write-Host ('  [' + (`$i+1) + '] ' + `$p[`$i]) }; Write-Host ''; `$n = Read-Host '  Number'; `$s = `$p[[int]`$n-1] }; if (`$s) { cd `$s; Write-Host ('  Opening: ' + `$s) -ForegroundColor Green; $PostCommand }
+    # Create a picker script file (avoids escaping issues with WT)
+    $scriptPath = Join-Path $env:TEMP "quickstart-picker.ps1"
+
+    $scriptContent = @"
+Set-Location '$WorkingDir'
+`$projects = Get-ChildItem -Directory | Select-Object -ExpandProperty Name
+
+if (`$projects.Count -eq 0) {
+    Write-Host ''
+    Write-Host '  No project folders found in: $WorkingDir' -ForegroundColor Red
+    Write-Host ''
+    Read-Host '  Press Enter to exit'
+    exit
+}
+
+`$hasFzf = Get-Command fzf -ErrorAction SilentlyContinue
+
+if (`$hasFzf) {
+    `$selected = `$projects | fzf --height=80% --reverse --border --prompt='Select project: '
+} else {
+    Write-Host ''
+    Write-Host '  Select a Project' -ForegroundColor Cyan
+    Write-Host ''
+    for (`$i = 0; `$i -lt `$projects.Count; `$i++) {
+        Write-Host ('  [' + (`$i + 1) + '] ' + `$projects[`$i])
+    }
+    Write-Host ''
+    `$num = Read-Host '  Number'
+    if (`$num -match '^\d+`$' -and [int]`$num -ge 1 -and [int]`$num -le `$projects.Count) {
+        `$selected = `$projects[[int]`$num - 1]
+    }
+}
+
+if (`$selected) {
+    Set-Location `$selected
+    Write-Host ''
+    Write-Host "  Opening: `$selected" -ForegroundColor Green
+    Write-Host ''
+    $PostCommand
+}
 "@
-    return $script
+
+    Set-Content -Path $scriptPath -Value $scriptContent -Force
+    return $scriptPath
 }
 
 # Launch terminal(s) on a monitor using WT's native pane splitting
@@ -181,15 +220,19 @@ function Start-MonitorTerminals {
         [string]$PostCommand
     )
 
-    $pickerCmd = Get-PickerCommand -WorkingDir $WorkingDir -PostCommand $PostCommand
+    # Write picker script to temp file (avoids WT escaping issues)
+    $pickerScript = Write-PickerScript -WorkingDir $WorkingDir -PostCommand $PostCommand
 
     # Position on correct monitor by using --pos with a point inside that monitor
     $posX = $Monitor.X + 100
     $posY = $Monitor.Y + 100
 
+    # Base command to run the picker script
+    $paneCmd = "powershell -ExecutionPolicy Bypass -NoExit -File `"$pickerScript`""
+
     if ($PaneCount -eq 1) {
         # Single pane - just maximize on the monitor
-        $wtArgs = "--pos $posX,$posY -M --title `"$WindowName`" powershell -NoExit -Command `"$pickerCmd`""
+        $wtArgs = "--pos $posX,$posY -M --title `"$WindowName`" $paneCmd"
         Start-Process "wt" -ArgumentList $wtArgs
     }
     else {
@@ -197,42 +240,42 @@ function Start-MonitorTerminals {
         # WT uses ; to separate commands, sp for split-pane
         # -V = vertical split (side by side), -H = horizontal split (stacked)
 
-        $wtCmd = "--pos $posX,$posY -M --title `"$WindowName`" powershell -NoExit -Command `"$pickerCmd`""
+        $wtCmd = "--pos $posX,$posY -M --title `"$WindowName`" $paneCmd"
 
         if ($Layout -eq "vertical" -or $PaneCount -eq 2) {
             # 2 panes side by side
             for ($i = 1; $i -lt $PaneCount; $i++) {
-                $wtCmd += " `; sp -V powershell -NoExit -Command `"$pickerCmd`""
+                $wtCmd += " `; sp -V $paneCmd"
             }
         }
         elseif ($Layout -eq "horizontal") {
             # Stacked horizontally
             for ($i = 1; $i -lt $PaneCount; $i++) {
-                $wtCmd += " `; sp -H powershell -NoExit -Command `"$pickerCmd`""
+                $wtCmd += " `; sp -H $paneCmd"
             }
         }
         elseif ($Layout -eq "grid") {
             # Grid layout: 4 panes = 2x2, 6 panes = 2x3, etc.
             if ($PaneCount -eq 4) {
                 # Create 2x2 grid: split vertical, then split each horizontal
-                $wtCmd = "--pos $posX,$posY -M --title `"$WindowName`" powershell -NoExit -Command `"$pickerCmd`""
-                $wtCmd += " `; sp -V powershell -NoExit -Command `"$pickerCmd`""
-                $wtCmd += " `; mf left `; sp -H powershell -NoExit -Command `"$pickerCmd`""
-                $wtCmd += " `; mf right `; sp -H powershell -NoExit -Command `"$pickerCmd`""
+                $wtCmd = "--pos $posX,$posY -M --title `"$WindowName`" $paneCmd"
+                $wtCmd += " `; sp -V $paneCmd"
+                $wtCmd += " `; mf left `; sp -H $paneCmd"
+                $wtCmd += " `; mf right `; sp -H $paneCmd"
             }
             elseif ($PaneCount -eq 6) {
                 # 2x3 grid
-                $wtCmd = "--pos $posX,$posY -M --title `"$WindowName`" powershell -NoExit -Command `"$pickerCmd`""
-                $wtCmd += " `; sp -V powershell -NoExit -Command `"$pickerCmd`""
-                $wtCmd += " `; sp -V powershell -NoExit -Command `"$pickerCmd`""
-                $wtCmd += " `; mf first `; sp -H powershell -NoExit -Command `"$pickerCmd`""
-                $wtCmd += " `; mf previous `; sp -H powershell -NoExit -Command `"$pickerCmd`""
-                $wtCmd += " `; mf last `; sp -H powershell -NoExit -Command `"$pickerCmd`""
+                $wtCmd = "--pos $posX,$posY -M --title `"$WindowName`" $paneCmd"
+                $wtCmd += " `; sp -V $paneCmd"
+                $wtCmd += " `; sp -V $paneCmd"
+                $wtCmd += " `; mf first `; sp -H $paneCmd"
+                $wtCmd += " `; mf previous `; sp -H $paneCmd"
+                $wtCmd += " `; mf last `; sp -H $paneCmd"
             }
             else {
                 # Fallback: just do vertical splits
                 for ($i = 1; $i -lt $PaneCount; $i++) {
-                    $wtCmd += " `; sp -V powershell -NoExit -Command `"$pickerCmd`""
+                    $wtCmd += " `; sp -V $paneCmd"
                 }
             }
         }
