@@ -30,54 +30,76 @@ func runQk(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load("")
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("No config found. Run 'qk set' to get started.")
-			return nil
+			// Auto-configure: detect monitors, 1 window each, default projects root
+			return autoLaunch()
 		}
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	return launch(cfg)
+}
+
+func autoLaunch() error {
 	monitors, err := monitor.Detect()
 	if err != nil {
 		return fmt.Errorf("failed to detect monitors: %w", err)
 	}
 
-	totalWindows := 0
-	for _, mc := range cfg.Monitors {
-		totalWindows += mc.Windows
+	monConfigs := make([]config.MonitorConfig, len(monitors))
+	for i := range monitors {
+		monConfigs[i] = config.MonitorConfig{Windows: 1, Layout: "full"}
 	}
-	fmt.Printf("Launching %d terminals across %d monitors...", totalWindows, len(cfg.Monitors))
 
-	launched := 0
+	cfg := &config.Config{
+		Version:      2,
+		ProjectsRoot: config.DefaultProjectsRoot(),
+		Monitors:     monConfigs,
+	}
+
+	// Save so next run is instant
+	config.Save(cfg, "")
+
+	return launch(cfg)
+}
+
+func launch(cfg *config.Config) error {
+	monitors, err := monitor.Detect()
+	if err != nil {
+		return fmt.Errorf("failed to detect monitors: %w", err)
+	}
+
+	// Build all launch configs up front
+	var configs []window.LaunchConfig
 	for i, mc := range cfg.Monitors {
 		if i >= len(monitors) {
-			fmt.Printf("\nWarning: Monitor %d not found, skipping\n", i+1)
-			continue
+			break
 		}
-
-		targetMonitor := &monitors[i]
-		positions := window.CalculateLayout(targetMonitor, mc.Windows, mc.Layout)
-
+		positions := window.CalculateLayout(&monitors[i], mc.Windows, mc.Layout)
 		for j, pos := range positions {
-			title := fmt.Sprintf("qk-%d-%d", i+1, j+1)
-
-			err := window.LaunchTerminal(window.LaunchConfig{
-				Title:      title,
+			configs = append(configs, window.LaunchConfig{
+				Title:      fmt.Sprintf("qk-%d-%d", i+1, j+1),
 				WorkingDir: cfg.ProjectsRoot,
 				X:          pos.X,
 				Y:          pos.Y,
 				Width:      pos.Width,
 				Height:     pos.Height,
-				Command:    cfg.Command,
 			})
-			if err != nil {
-				fmt.Printf("\nWarning: Failed to launch terminal %d on monitor %d: %v\n", j+1, i+1, err)
-				continue
-			}
-			launched++
 		}
 	}
 
+	fmt.Printf("Launching %d terminals...", len(configs))
+
+	// Launch all in parallel
+	results := window.LaunchAll(configs, config.Command)
+
 	fmt.Println("done.")
+
+	for _, r := range results {
+		if r.Err != nil {
+			fmt.Printf("  Warning: %s: %v\n", r.Title, r.Err)
+		}
+	}
+
 	return nil
 }
 
@@ -111,6 +133,6 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("qk v0.2.0")
+		fmt.Println("qk v0.3.0")
 	},
 }

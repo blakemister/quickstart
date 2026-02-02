@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os/exec"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -21,7 +22,7 @@ var (
 )
 
 const (
-	SWP_NOZORDER  = 0x0004
+	SWP_NOZORDER   = 0x0004
 	SWP_SHOWWINDOW = 0x0040
 	HWND_TOP       = 0
 )
@@ -42,7 +43,12 @@ type LaunchConfig struct {
 	Y          int
 	Width      int
 	Height     int
-	Command    string // command to run after project selection
+}
+
+// LaunchResult holds the outcome of a terminal launch
+type LaunchResult struct {
+	Title string
+	Err   error
 }
 
 // CalculateLayout calculates window positions based on layout type
@@ -129,7 +135,6 @@ func calculateHorizontal(mon *monitor.Monitor, count int) []Position {
 }
 
 // encodePS converts a PowerShell script to a base64 UTF-16LE encoded string
-// for use with powershell -EncodedCommand, which avoids all quoting/escaping issues
 func encodePS(script string) string {
 	u16 := utf16.Encode([]rune(script))
 	b := make([]byte, len(u16)*2)
@@ -140,12 +145,61 @@ func encodePS(script string) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-// LaunchTerminal launches a Windows Terminal window with an inline project picker
-func LaunchTerminal(cfg LaunchConfig) error {
-	// Build the picker script as a clean multi-line PowerShell script
-	// Using EncodedCommand avoids wt treating ';' as tab separators
-	// and avoids cmd/start argument mangling
-	script := "$d = '" + cfg.WorkingDir + "'\n" +
+// LaunchAll launches all terminals in parallel and positions them
+func LaunchAll(configs []LaunchConfig, command string) []LaunchResult {
+	results := make([]LaunchResult, len(configs))
+
+	// Pre-encode the picker script once (same for all terminals)
+	// Each terminal gets its own title but same picker logic
+	scripts := make([]string, len(configs))
+	for i, cfg := range configs {
+		scripts[i] = buildPickerScript(cfg.WorkingDir, command)
+		_ = scripts[i] // used below
+		results[i].Title = cfg.Title
+	}
+
+	// Phase 1: Launch all wt processes as fast as possible
+	for i, cfg := range configs {
+		encoded := encodePS(scripts[i])
+		args := []string{
+			"--title", cfg.Title,
+			"-d", cfg.WorkingDir,
+			"powershell", "-NoExit", "-EncodedCommand", encoded,
+		}
+		cmd := exec.Command("wt", args...)
+		if err := cmd.Start(); err != nil {
+			results[i].Err = fmt.Errorf("failed to launch: %w", err)
+		}
+	}
+
+	// Phase 2: Wait once for windows to start appearing, then find and position all in parallel
+	time.Sleep(300 * time.Millisecond)
+
+	var wg sync.WaitGroup
+	for i, cfg := range configs {
+		if results[i].Err != nil {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, c LaunchConfig) {
+			defer wg.Done()
+			hwnd, err := findWindowByTitle(c.Title)
+			if err != nil {
+				results[idx].Err = fmt.Errorf("failed to find window: %w", err)
+				return
+			}
+			if err := setWindowPosition(hwnd, c.X, c.Y, c.Width, c.Height); err != nil {
+				results[idx].Err = fmt.Errorf("failed to position: %w", err)
+			}
+		}(i, cfg)
+	}
+	wg.Wait()
+
+	return results
+}
+
+func buildPickerScript(workingDir, command string) string {
+	return "$d = '" + workingDir + "'\n" +
 		"$p = Get-ChildItem $d -Directory\n" +
 		"if ($p.Count -eq 0) {\n" +
 		"    Write-Host 'No projects found in' $d\n" +
@@ -170,45 +224,20 @@ func LaunchTerminal(cfg LaunchConfig) error {
 		"Write-Host ''\n" +
 		"Write-Host ('Opening ' + $p[$idx].Name + '...') -ForegroundColor Green\n" +
 		"Write-Host ''\n" +
-		cfg.Command + "\n"
+		command + "\n"
+}
 
-	encoded := encodePS(script)
-
-	// Launch wt directly (not through cmd /c start) to avoid argument mangling
-	// No -w flag so each terminal is a separate window
-	args := []string{
-		"--title", cfg.Title,
-		"-d", cfg.WorkingDir,
-		"powershell", "-NoExit", "-EncodedCommand", encoded,
-	}
-
-	cmd := exec.Command("wt", args...)
-	err := cmd.Start()
-	if err != nil {
-		return fmt.Errorf("failed to launch terminal: %w", err)
-	}
-
-	// Wait for window to appear
-	time.Sleep(500 * time.Millisecond)
-
-	// Find and position the window
-	hwnd, err := findWindowByTitle(cfg.Title)
-	if err != nil {
-		return fmt.Errorf("failed to find window: %w", err)
-	}
-
-	err = setWindowPosition(hwnd, cfg.X, cfg.Y, cfg.Width, cfg.Height)
-	if err != nil {
-		return fmt.Errorf("failed to position window: %w", err)
-	}
-
-	return nil
+// LaunchTerminal launches a single terminal (kept for backward compat)
+func LaunchTerminal(cfg LaunchConfig, command string) error {
+	results := LaunchAll([]LaunchConfig{cfg}, command)
+	return results[0].Err
 }
 
 func findWindowByTitle(title string) (uintptr, error) {
 	var foundHwnd uintptr
 
-	for attempts := 0; attempts < 10; attempts++ {
+	// Poll at 50ms intervals instead of 200ms — find window as soon as it appears
+	for attempts := 0; attempts < 40; attempts++ {
 		callback := syscall.NewCallback(func(hwnd uintptr, lParam uintptr) uintptr {
 			var windowTitle [256]uint16
 			procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&windowTitle[0])), 256)
@@ -227,7 +256,7 @@ func findWindowByTitle(title string) (uintptr, error) {
 			return foundHwnd, nil
 		}
 
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	return 0, fmt.Errorf("window with title '%s' not found", title)

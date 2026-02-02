@@ -8,11 +8,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const Command = "claude --dangerously-skip-permissions"
+
 // Config represents the application configuration
 type Config struct {
 	Version      int             `yaml:"version"`
 	ProjectsRoot string          `yaml:"projectsRoot"`
-	Command      string          `yaml:"command"`
 	Monitors     []MonitorConfig `yaml:"monitors"`
 }
 
@@ -26,6 +27,12 @@ type MonitorConfig struct {
 func DefaultConfigPath() string {
 	homeDir, _ := os.UserHomeDir()
 	return filepath.Join(homeDir, ".qk", "config.yaml")
+}
+
+// DefaultProjectsRoot returns the default projects directory
+func DefaultProjectsRoot() string {
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".1dev")
 }
 
 // Load reads the configuration from a file

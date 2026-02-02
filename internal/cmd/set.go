@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -22,23 +21,13 @@ var setCmd = &cobra.Command{
 func runSet(cmd *cobra.Command, args []string) error {
 	reader := bufio.NewReader(os.Stdin)
 
-	// Load existing config for defaults
 	existing, _ := config.Load("")
 
-	// Determine defaults
-	homeDir, _ := os.UserHomeDir()
-	defaultRoot := filepath.Join(homeDir, ".1dev")
-	defaultCommand := "claude --dangerously-skip-permissions"
-	if existing != nil {
-		if existing.ProjectsRoot != "" {
-			defaultRoot = existing.ProjectsRoot
-		}
-		if existing.Command != "" {
-			defaultCommand = existing.Command
-		}
+	defaultRoot := config.DefaultProjectsRoot()
+	if existing != nil && existing.ProjectsRoot != "" {
+		defaultRoot = existing.ProjectsRoot
 	}
 
-	// Ask for projects root
 	fmt.Printf("Projects root [%s]: ", defaultRoot)
 	projectsRoot, _ := reader.ReadString('\n')
 	projectsRoot = strings.TrimSpace(projectsRoot)
@@ -46,7 +35,6 @@ func runSet(cmd *cobra.Command, args []string) error {
 		projectsRoot = defaultRoot
 	}
 
-	// Validate directory exists
 	if _, err := os.Stat(projectsRoot); os.IsNotExist(err) {
 		fmt.Printf("Directory '%s' does not exist. Create it? [Y/n]: ", projectsRoot)
 		answer, _ := reader.ReadString('\n')
@@ -57,15 +45,6 @@ func runSet(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Ask for command
-	fmt.Printf("Command [%s]: ", defaultCommand)
-	command, _ := reader.ReadString('\n')
-	command = strings.TrimSpace(command)
-	if command == "" {
-		command = defaultCommand
-	}
-
-	// Detect monitors
 	fmt.Println()
 	fmt.Print("Detecting monitors...")
 	monitors, err := monitor.Detect()
@@ -83,7 +62,6 @@ func runSet(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	// Configure windows per monitor
 	monitorConfigs := make([]config.MonitorConfig, len(monitors))
 	for i := range monitors {
 		defaultWindows := 1
@@ -102,7 +80,6 @@ func runSet(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Auto-assign layout
 		layout := "full"
 		if windows == 2 {
 			layout = "vertical"
@@ -116,11 +93,9 @@ func runSet(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Build and save config
 	cfg := &config.Config{
 		Version:      2,
 		ProjectsRoot: projectsRoot,
-		Command:      command,
 		Monitors:     monitorConfigs,
 	}
 
