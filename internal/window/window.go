@@ -1,11 +1,12 @@
 package window
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os/exec"
-	"strings"
 	"syscall"
 	"time"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/bcmister/qk/internal/monitor"
@@ -127,33 +128,61 @@ func calculateHorizontal(mon *monitor.Monitor, count int) []Position {
 	return positions
 }
 
+// encodePS converts a PowerShell script to a base64 UTF-16LE encoded string
+// for use with powershell -EncodedCommand, which avoids all quoting/escaping issues
+func encodePS(script string) string {
+	u16 := utf16.Encode([]rune(script))
+	b := make([]byte, len(u16)*2)
+	for i, r := range u16 {
+		b[i*2] = byte(r)
+		b[i*2+1] = byte(r >> 8)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
 // LaunchTerminal launches a Windows Terminal window with an inline project picker
 func LaunchTerminal(cfg LaunchConfig) error {
-	// Escape single quotes in paths for PowerShell
-	escapedDir := strings.ReplaceAll(cfg.WorkingDir, "'", "''")
-	escapedCmd := strings.ReplaceAll(cfg.Command, "'", "''")
+	// Build the picker script as a clean multi-line PowerShell script
+	// Using EncodedCommand avoids wt treating ';' as tab separators
+	// and avoids cmd/start argument mangling
+	script := "$d = '" + cfg.WorkingDir + "'\n" +
+		"$p = Get-ChildItem $d -Directory\n" +
+		"if ($p.Count -eq 0) {\n" +
+		"    Write-Host 'No projects found in' $d\n" +
+		"    Read-Host 'Press Enter to exit'\n" +
+		"    exit\n" +
+		"}\n" +
+		"Write-Host ''\n" +
+		"Write-Host ('Projects in ' + $d + ':') -ForegroundColor Cyan\n" +
+		"Write-Host ''\n" +
+		"$i = 1\n" +
+		"$p | ForEach-Object { Write-Host ('  [' + $i + '] ' + $_.Name); $i++ }\n" +
+		"Write-Host ''\n" +
+		"$s = Read-Host 'Pick'\n" +
+		"$idx = [int]$s - 1\n" +
+		"if ($idx -lt 0 -or $idx -ge $p.Count) {\n" +
+		"    Write-Host 'Invalid selection.' -ForegroundColor Red\n" +
+		"    Read-Host 'Press Enter to exit'\n" +
+		"    exit\n" +
+		"}\n" +
+		"$t = $p[$idx].FullName\n" +
+		"Set-Location $t\n" +
+		"Write-Host ''\n" +
+		"Write-Host ('Opening ' + $p[$idx].Name + '...') -ForegroundColor Green\n" +
+		"Write-Host ''\n" +
+		cfg.Command + "\n"
 
-	// Inline PowerShell picker: list subdirs, read selection, cd and run command
-	picker := fmt.Sprintf(
-		"$d='%s'; $p=Get-ChildItem $d -Dir; if($p.Count -eq 0){Write-Host 'No projects found in' $d; Read-Host; exit}; "+
-			"Write-Host ''; Write-Host ('Projects in ' + $d + ':') -ForegroundColor Cyan; Write-Host ''; "+
-			"$i=1; $p|%%{Write-Host ('  [' + $i + '] ' + $_.Name); $i++}; Write-Host ''; "+
-			"$s=Read-Host 'Pick'; "+
-			"$t=$p[[int]$s-1].FullName; Set-Location $t; "+
-			"Write-Host ''; Write-Host ('Opening ' + (Split-Path $t -Leaf) + '...') -ForegroundColor Green; Write-Host ''; "+
-			"Invoke-Expression '%s'",
-		escapedDir, escapedCmd,
-	)
+	encoded := encodePS(script)
 
-	// Launch as a separate wt process (no -w flag, so each is its own window)
+	// Launch wt directly (not through cmd /c start) to avoid argument mangling
+	// No -w flag so each terminal is a separate window
 	args := []string{
-		"/c", "start", "wt",
 		"--title", cfg.Title,
 		"-d", cfg.WorkingDir,
-		"powershell", "-NoExit", "-Command", picker,
+		"powershell", "-NoExit", "-EncodedCommand", encoded,
 	}
 
-	cmd := exec.Command("cmd", args...)
+	cmd := exec.Command("wt", args...)
 	err := cmd.Start()
 	if err != nil {
 		return fmt.Errorf("failed to launch terminal: %w", err)
