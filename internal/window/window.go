@@ -230,10 +230,11 @@ if ($all.Count -eq 0) {
 
 $filter = ""
 $sel = 0
+$viewOffset = 0
 $maxShow = [Math]::Min(12, $all.Count)
 
 function Draw {
-    param($items, $sel, $filter, $startY)
+    param($items, $sel, $filter, $startY, $viewOffset)
 
     $pos = $Host.UI.RawUI.CursorPosition
     $pos.Y = $startY
@@ -248,12 +249,12 @@ function Draw {
     Write-Host ""
     Write-Host "  ${DIM}─────────────────────────────────${R}      "
 
-    # Items
-    $count = [Math]::Min($maxShow, $items.Count)
+    # Items (with viewport scrolling)
     for ($i = 0; $i -lt $maxShow; $i++) {
-        if ($i -lt $items.Count) {
-            $name = $items[$i]
-            if ($i -eq $sel) {
+        $itemIdx = $viewOffset + $i
+        if ($itemIdx -lt $items.Count) {
+            $name = $items[$itemIdx]
+            if ($itemIdx -eq $sel) {
                 Write-Host "  ${INV}${CYN} > ${WHT}$name ${R}                              "
             } else {
                 Write-Host "    ${DIM}$name${R}                                   "
@@ -263,9 +264,13 @@ function Draw {
         }
     }
 
-    # Footer
+    # Footer with position indicator
     Write-Host ""
-    Write-Host "  ${DIM}↑↓${R} navigate  ${DIM}enter${R} select  ${DIM}esc${R} quit     "
+    if ($items.Count -gt $maxShow) {
+        Write-Host "  ${DIM}↑↓${R} navigate  ${DIM}($($sel+1)/$($items.Count))${R}  ${DIM}esc${R} quit     "
+    } else {
+        Write-Host "  ${DIM}↑↓${R} navigate  ${DIM}enter${R} select  ${DIM}esc${R} quit     "
+    }
 }
 
 function FilterList {
@@ -284,7 +289,7 @@ Write-Host ""
 
 $startY = $Host.UI.RawUI.CursorPosition.Y
 $filtered = $all
-Draw $filtered $sel $filter $startY
+Draw $filtered $sel $filter $startY $viewOffset
 
 # Main loop
 while ($true) {
@@ -316,15 +321,21 @@ while ($true) {
 
     # Up arrow
     if ($vk -eq 38) {
-        if ($sel -gt 0) { $sel-- }
-        Draw $filtered $sel $filter $startY
+        if ($sel -gt 0) {
+            $sel--
+            if ($sel -lt $viewOffset) { $viewOffset = $sel }
+        }
+        Draw $filtered $sel $filter $startY $viewOffset
         continue
     }
 
     # Down arrow
     if ($vk -eq 40) {
-        if ($sel -lt ($filtered.Count - 1) -and $sel -lt ($maxShow - 1)) { $sel++ }
-        Draw $filtered $sel $filter $startY
+        if ($sel -lt ($filtered.Count - 1)) {
+            $sel++
+            if ($sel -ge ($viewOffset + $maxShow)) { $viewOffset = $sel - $maxShow + 1 }
+        }
+        Draw $filtered $sel $filter $startY $viewOffset
         continue
     }
 
@@ -334,7 +345,8 @@ while ($true) {
             $filter = $filter.Substring(0, $filter.Length - 1)
             $filtered = FilterList $all $filter
             $sel = 0
-            Draw $filtered $sel $filter $startY
+            $viewOffset = 0
+            Draw $filtered $sel $filter $startY $viewOffset
         }
         continue
     }
@@ -344,7 +356,8 @@ while ($true) {
         $filter += $ch
         $filtered = FilterList $all $filter
         $sel = 0
-        Draw $filtered $sel $filter $startY
+        $viewOffset = 0
+        Draw $filtered $sel $filter $startY $viewOffset
     }
 }
 `

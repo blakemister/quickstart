@@ -13,7 +13,7 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "qk",
-	Short: "Launch terminal windows across monitors with project picker",
+	Short: "Quick project picker for terminal",
 	RunE:  runQk,
 }
 
@@ -25,148 +25,22 @@ func init() {
 	rootCmd.AddCommand(setCmd)
 	rootCmd.AddCommand(monitorsCmd)
 	rootCmd.AddCommand(versionCmd)
-	rootCmd.AddCommand(tabCmd)
+	rootCmd.AddCommand(allCmd)
 }
 
 func runQk(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load("")
 	if err != nil {
 		if os.IsNotExist(err) {
-			return autoLaunch()
-		}
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	return launch(cfg)
-}
-
-func autoLaunch() error {
-	monitors, err := monitor.Detect()
-	if err != nil {
-		return fmt.Errorf("failed to detect monitors: %w", err)
-	}
-
-	monConfigs := make([]config.MonitorConfig, len(monitors))
-	for i := range monitors {
-		monConfigs[i] = config.MonitorConfig{Windows: 1, Layout: "full"}
-	}
-
-	cfg := &config.Config{
-		Version:      2,
-		ProjectsRoot: config.DefaultProjectsRoot(),
-		Monitors:     monConfigs,
-	}
-
-	config.Save(cfg, "")
-
-	return launch(cfg)
-}
-
-func launch(cfg *config.Config) error {
-	monitors, err := monitor.Detect()
-	if err != nil {
-		return fmt.Errorf("failed to detect monitors: %w", err)
-	}
-
-	// Group configs by monitor for display
-	type monGroup struct {
-		monIdx  int
-		configs []window.LaunchConfig
-	}
-	var groups []monGroup
-
-	var allConfigs []window.LaunchConfig
-	for i, mc := range cfg.Monitors {
-		if i >= len(monitors) {
-			break
-		}
-		positions := window.CalculateLayout(&monitors[i], mc.Windows, mc.Layout)
-		g := monGroup{monIdx: i}
-		for j, pos := range positions {
-			lc := window.LaunchConfig{
-				Title:      fmt.Sprintf("qk-%d-%d", i+1, j+1),
-				WorkingDir: cfg.ProjectsRoot,
-				X:          pos.X,
-				Y:          pos.Y,
-				Width:      pos.Width,
-				Height:     pos.Height,
+			cfg = &config.Config{
+				ProjectsRoot: config.DefaultProjectsRoot(),
 			}
-			allConfigs = append(allConfigs, lc)
-			g.configs = append(g.configs, lc)
-		}
-		groups = append(groups, g)
-	}
-
-	ui.Logo("")
-	ui.Sep()
-
-	// Use current terminal for first window, spawn others
-	launchResult := window.LaunchAllWithCurrent(allConfigs, config.Command)
-	results := launchResult.Results
-
-	// Adjust messaging based on how many new windows were spawned
-	newWindows := len(allConfigs) - 1
-	if newWindows > 0 {
-		ui.Head(fmt.Sprintf("Launching %d new terminals (using current for first)", newWindows))
-	} else {
-		ui.Head("Using current terminal")
-	}
-	fmt.Println()
-
-	// Build result lookup
-	resultMap := make(map[string]error)
-	for _, r := range results {
-		resultMap[r.Title] = r.Err
-	}
-
-	// Display per-monitor panels
-	for _, g := range groups {
-		badge := ""
-		if monitors[g.monIdx].Primary {
-			badge = "Primary"
-		}
-		ui.BoxStart(fmt.Sprintf("Monitor %d", g.monIdx+1), badge)
-		for _, c := range g.configs {
-			err := resultMap[c.Title]
-			label := fmt.Sprintf("%s%s%s", ui.White, c.Title, ui.Reset)
-			ui.BoxRow(fmt.Sprintf("%s  %s%s%s",
-				label,
-				statusColor(err == nil), statusIcon(err == nil), ui.Reset))
-		}
-		ui.BoxEnd()
-	}
-
-	// Print any warnings
-	hasWarn := false
-	for _, r := range results {
-		if r.Err != nil {
-			if !hasWarn {
-				fmt.Println()
-				hasWarn = true
-			}
-			ui.Warn(fmt.Sprintf("%s: %v", r.Title, r.Err))
+		} else {
+			return fmt.Errorf("failed to load config: %w", err)
 		}
 	}
-
-	ui.Fin("Ready")
-	fmt.Println()
-
-	// Run picker in current terminal (blocking)
-	return launchResult.RunPicker()
-}
-
-func statusIcon(ok bool) string {
-	if ok {
-		return ui.Check
-	}
-	return ui.Cross
-}
-
-func statusColor(ok bool) string {
-	if ok {
-		return ui.BrGreen
-	}
-	return ui.BrRed
+	// Run picker directly - no UI chrome, fastest path
+	return window.RunPickerInCurrent(cfg.ProjectsRoot, config.Command)
 }
 
 var monitorsCmd = &cobra.Command{
