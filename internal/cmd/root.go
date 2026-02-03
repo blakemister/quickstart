@@ -99,10 +99,19 @@ func launch(cfg *config.Config) error {
 
 	ui.Logo("")
 	ui.Sep()
-	ui.Head(fmt.Sprintf("Launching %d terminals across %d monitors", len(allConfigs), len(groups)))
-	fmt.Println()
 
-	results := window.LaunchAll(allConfigs, config.Command)
+	// Use current terminal for first window, spawn others
+	launchResult := window.LaunchAllWithCurrent(allConfigs, config.Command)
+	results := launchResult.Results
+
+	// Adjust messaging based on how many new windows were spawned
+	newWindows := len(allConfigs) - 1
+	if newWindows > 0 {
+		ui.Head(fmt.Sprintf("Launching %d new terminals (using current for first)", newWindows))
+	} else {
+		ui.Head("Using current terminal")
+	}
+	fmt.Println()
 
 	// Build result lookup
 	resultMap := make(map[string]error)
@@ -139,8 +148,11 @@ func launch(cfg *config.Config) error {
 		}
 	}
 
-	ui.Fin("All terminals launched")
-	return nil
+	ui.Fin("Ready")
+	fmt.Println()
+
+	// Run picker in current terminal (blocking)
+	return launchResult.RunPicker()
 }
 
 func statusIcon(ok bool) string {

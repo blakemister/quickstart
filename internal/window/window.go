@@ -3,6 +3,7 @@ package window
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -19,6 +20,9 @@ var (
 	procSetWindowPos   = user32.NewProc("SetWindowPos")
 	procEnumWindows    = user32.NewProc("EnumWindows")
 	procGetWindowTextW = user32.NewProc("GetWindowTextW")
+
+	kernel32             = syscall.NewLazyDLL("kernel32.dll")
+	procGetConsoleWindow = kernel32.NewProc("GetConsoleWindow")
 )
 
 const (
@@ -199,72 +203,151 @@ func LaunchAll(configs []LaunchConfig, command string) []LaunchResult {
 }
 
 func buildPickerScript(workingDir, command string) string {
-	// Pre-build ANSI codes as PS variables to avoid array-index parsing with [char]27 + '[xxm'
-	return "$R  = [char]27 + '[0m'\n" +
-		"$BC = [char]27 + '[96m'\n" +
-		"$C  = [char]27 + '[36m'\n" +
-		"$DG = [char]27 + '[90m'\n" +
-		"$BW = [char]27 + '[97m'\n" +
-		"$W  = [char]27 + '[37m'\n" +
-		"$BG = [char]27 + '[92m'\n" +
-		"$BY = [char]27 + '[93m'\n" +
-		"$BR = [char]27 + '[91m'\n" +
-		"$d = '" + workingDir + "'\n" +
-		"$p = Get-ChildItem $d -Directory\n" +
-		"Clear-Host\n" +
+	// Interactive arrow-key picker with fuzzy filtering
+	// Inspired by fzf/gum - navigate with arrows, type to filter, enter to select
+	return `
+$R   = [char]27 + '[0m'
+$DIM = [char]27 + '[90m'
+$CYN = [char]27 + '[96m'
+$WHT = [char]27 + '[97m'
+$GRN = [char]27 + '[92m'
+$YEL = [char]27 + '[93m'
+$RED = [char]27 + '[91m'
+$INV = [char]27 + '[7m'
+$HID = [char]27 + '[?25l'
+$SHW = [char]27 + '[?25h'
 
-		// Logo — gradient cyan to gray
-		"Write-Host ''\n" +
-		"Write-Host \"  ${BC} ██████╗ ██╗  ██╗${R}\"\n" +
-		"Write-Host \"  ${BC}██╔═══██╗██║ ██╔╝${R}\"\n" +
-		"Write-Host \"  ${C}██║   ██║█████╔╝${R}\"\n" +
-		"Write-Host \"  ${C}██║▄▄ ██║██╔═██╗${R}\"\n" +
-		"Write-Host \"  ${DG}╚██████╔╝██║  ██╗${R}\"\n" +
-		"Write-Host \"  ${DG} ╚══▀▀═╝ ╚═╝  ╚═╝${R}\"\n" +
-		"Write-Host ''\n" +
-		"$ln = $DG + ('─' * 38) + $R\n" +
-		"Write-Host \"  $ln\"\n" +
+$d = '` + workingDir + `'
+$all = @(Get-ChildItem $d -Directory | Select-Object -ExpandProperty Name)
 
-		// Empty project guard
-		"if ($p.Count -eq 0) {\n" +
-		"    Write-Host ''\n" +
-		"    Write-Host \"  ${BR}✗${R} ${BW}No projects in $d${R}\"\n" +
-		"    Write-Host ''\n" +
-		"    Read-Host '  Press Enter'\n" +
-		"    exit\n" +
-		"}\n" +
+if ($all.Count -eq 0) {
+    Write-Host ""
+    Write-Host "  ${RED}No projects in $d${R}"
+    Write-Host ""
+    Read-Host "  Press Enter"
+    exit
+}
 
-		// Project list
-		"Write-Host ''\n" +
-		"Write-Host \"  ${BC}◆${R} ${BW}Select a project${R}\"\n" +
-		"Write-Host ''\n" +
-		"$i = 1\n" +
-		"$p | ForEach-Object {\n" +
-		"    $num = $i.ToString().PadLeft(2)\n" +
-		"    Write-Host \"   ${BY}$num${R}  ${W}$($_.Name)${R}\"\n" +
-		"    $i++\n" +
-		"}\n" +
-		"Write-Host ''\n" +
+$filter = ""
+$sel = 0
+$maxShow = [Math]::Min(12, $all.Count)
 
-		// Prompt
-		"Write-Host \"  ${BC}▸${R} \" -NoNewline\n" +
-		"$s = Read-Host\n" +
-		"$idx = [int]$s - 1\n" +
+function Draw {
+    param($items, $sel, $filter, $startY)
 
-		// Validation
-		"if ($idx -lt 0 -or $idx -ge $p.Count) {\n" +
-		"    Write-Host \"  ${BR}✗${R} ${BW}Invalid selection${R}\"\n" +
-		"    Read-Host '  Press Enter'\n" +
-		"    exit\n" +
-		"}\n" +
+    $pos = $Host.UI.RawUI.CursorPosition
+    $pos.Y = $startY
+    $Host.UI.RawUI.CursorPosition = $pos
 
-		// Launch
-		"$t = $p[$idx].FullName\n" +
-		"Set-Location $t\n" +
-		"Write-Host ''\n" +
-		"Write-Host \"  ${BG}◆${R} ${BW}Opening $($p[$idx].Name)${R}\"\n" +
-		"Write-Host ''\n" +
-		command + "\n"
+    # Header with filter
+    if ($filter -eq "") {
+        Write-Host "  ${CYN}>${R} ${DIM}type to filter...${R}                    " -NoNewline
+    } else {
+        Write-Host "  ${CYN}>${R} ${WHT}$filter${R}                              " -NoNewline
+    }
+    Write-Host ""
+    Write-Host "  ${DIM}─────────────────────────────────${R}      "
+
+    # Items
+    $count = [Math]::Min($maxShow, $items.Count)
+    for ($i = 0; $i -lt $maxShow; $i++) {
+        if ($i -lt $items.Count) {
+            $name = $items[$i]
+            if ($i -eq $sel) {
+                Write-Host "  ${INV}${CYN} > ${WHT}$name ${R}                              "
+            } else {
+                Write-Host "    ${DIM}$name${R}                                   "
+            }
+        } else {
+            Write-Host "                                          "
+        }
+    }
+
+    # Footer
+    Write-Host ""
+    Write-Host "  ${DIM}↑↓${R} navigate  ${DIM}enter${R} select  ${DIM}esc${R} quit     "
+}
+
+function FilterList {
+    param($items, $query)
+    if ($query -eq "") { return $items }
+    $q = $query.ToLower()
+    return @($items | Where-Object { $_.ToLower().Contains($q) })
+}
+
+# Setup
+Clear-Host
+Write-Host "${HID}" -NoNewline
+Write-Host ""
+Write-Host "  ${CYN}qk${R} ${DIM}· select project${R}"
+Write-Host ""
+
+$startY = $Host.UI.RawUI.CursorPosition.Y
+$filtered = $all
+Draw $filtered $sel $filter $startY
+
+# Main loop
+while ($true) {
+    $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    $vk = $key.VirtualKeyCode
+    $ch = $key.Character
+
+    # Escape - quit
+    if ($vk -eq 27) {
+        Write-Host "${SHW}" -NoNewline
+        Clear-Host
+        exit
+    }
+
+    # Enter - select
+    if ($vk -eq 13) {
+        if ($filtered.Count -gt 0) {
+            $chosen = $filtered[$sel]
+            Write-Host "${SHW}" -NoNewline
+            Clear-Host
+            Write-Host ""
+            Write-Host "  ${GRN}>${R} ${WHT}$chosen${R}"
+            Write-Host ""
+            Set-Location (Join-Path $d $chosen)
+            ` + command + `
+            break
+        }
+    }
+
+    # Up arrow
+    if ($vk -eq 38) {
+        if ($sel -gt 0) { $sel-- }
+        Draw $filtered $sel $filter $startY
+        continue
+    }
+
+    # Down arrow
+    if ($vk -eq 40) {
+        if ($sel -lt ($filtered.Count - 1) -and $sel -lt ($maxShow - 1)) { $sel++ }
+        Draw $filtered $sel $filter $startY
+        continue
+    }
+
+    # Backspace
+    if ($vk -eq 8) {
+        if ($filter.Length -gt 0) {
+            $filter = $filter.Substring(0, $filter.Length - 1)
+            $filtered = FilterList $all $filter
+            $sel = 0
+            Draw $filtered $sel $filter $startY
+        }
+        continue
+    }
+
+    # Printable character - add to filter
+    if ($ch -match '[\w\-\._]') {
+        $filter += $ch
+        $filtered = FilterList $all $filter
+        $sel = 0
+        Draw $filtered $sel $filter $startY
+    }
+}
+`
 }
 
 // LaunchTab opens a new tab in the current Windows Terminal window
@@ -347,4 +430,114 @@ func setWindowPosition(hwnd uintptr, x, y, width, height int) error {
 	}
 
 	return nil
+}
+
+// GetCurrentConsoleWindow returns the HWND of the current console window
+func GetCurrentConsoleWindow() uintptr {
+	hwnd, _, _ := procGetConsoleWindow.Call()
+	return hwnd
+}
+
+// RunPickerInCurrent runs the picker script in the current terminal (blocking)
+func RunPickerInCurrent(workingDir, command string) error {
+	script := buildPickerScript(workingDir, command)
+	encoded := encodePS(script)
+
+	cmd := exec.Command("powershell", "-NoExit", "-EncodedCommand", encoded)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
+// LaunchAllWithCurrentResult holds the results and a picker function
+type LaunchAllWithCurrentResult struct {
+	Results    []LaunchResult
+	RunPicker  func() error
+}
+
+// LaunchAllWithCurrent launches terminals where index 0 uses the current terminal
+// and indexes 1+ spawn new windows. Returns results and a picker function to run last.
+func LaunchAllWithCurrent(configs []LaunchConfig, command string) LaunchAllWithCurrentResult {
+	if len(configs) == 0 {
+		return LaunchAllWithCurrentResult{
+			Results:   nil,
+			RunPicker: func() error { return nil },
+		}
+	}
+
+	results := make([]LaunchResult, len(configs))
+	for i, cfg := range configs {
+		results[i].Title = cfg.Title
+	}
+
+	// Get current console window handle for positioning
+	currentHwnd := GetCurrentConsoleWindow()
+
+	// Launch additional windows (configs[1:]) via wt
+	if len(configs) > 1 {
+		for i := 1; i < len(configs); i++ {
+			cfg := configs[i]
+			script := buildPickerScript(cfg.WorkingDir, command)
+			encoded := encodePS(script)
+			args := []string{
+				"--title", cfg.Title,
+				"-d", cfg.WorkingDir,
+				"powershell", "-NoExit", "-EncodedCommand", encoded,
+			}
+			cmd := exec.Command("wt", args...)
+			if err := cmd.Start(); err != nil {
+				results[i].Err = fmt.Errorf("failed to launch: %w", err)
+			}
+		}
+
+		// Wait for windows to appear
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	// Position all windows in parallel
+	var wg sync.WaitGroup
+
+	// Position current terminal (index 0)
+	if currentHwnd != 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cfg := configs[0]
+			if err := setWindowPosition(currentHwnd, cfg.X, cfg.Y, cfg.Width, cfg.Height); err != nil {
+				results[0].Err = fmt.Errorf("failed to position current window: %w", err)
+			}
+		}()
+	}
+
+	// Position spawned windows (configs[1:])
+	for i := 1; i < len(configs); i++ {
+		if results[i].Err != nil {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, cfg LaunchConfig) {
+			defer wg.Done()
+			hwnd, err := findWindowByTitle(cfg.Title)
+			if err != nil {
+				results[idx].Err = fmt.Errorf("failed to find window: %w", err)
+				return
+			}
+			if err := setWindowPosition(hwnd, cfg.X, cfg.Y, cfg.Width, cfg.Height); err != nil {
+				results[idx].Err = fmt.Errorf("failed to position: %w", err)
+			}
+		}(i, configs[i])
+	}
+	wg.Wait()
+
+	// Return results and a picker function to call last
+	picker := func() error {
+		return RunPickerInCurrent(configs[0].WorkingDir, command)
+	}
+
+	return LaunchAllWithCurrentResult{
+		Results:   results,
+		RunPicker: picker,
+	}
 }
