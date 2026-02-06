@@ -231,14 +231,24 @@ if ($all.Count -eq 0) {
 $filter = ""
 $sel = 0
 $viewOffset = 0
-$maxShow = [Math]::Min(12, $all.Count)
+$maxShow = 12
 
 function Draw {
     param($items, $sel, $filter, $startY, $viewOffset)
 
-    $pos = $Host.UI.RawUI.CursorPosition
-    $pos.Y = $startY
-    $Host.UI.RawUI.CursorPosition = $pos
+    # Recalculate maxShow based on current terminal height (no item clamp — loop always
+    # draws full height so stale rows get blanked when filter shrinks the list)
+    $termH = $Host.UI.RawUI.WindowSize.Height
+    $script:maxShow = [Math]::Max(1, $termH - $startY - 4)
+
+    # Clamp viewOffset after potential resize
+    $maxOff = [Math]::Max(0, $items.Count - $script:maxShow)
+    if ($viewOffset -gt $maxOff) { $viewOffset = $maxOff }
+    $script:viewOffset = $viewOffset
+
+    # ANSI cursor positioning (1-indexed row)
+    $row = $startY + 1
+    Write-Host "$([char]27)[${row};1H" -NoNewline
 
     # Header with filter
     if ($filter -eq "") {
@@ -250,7 +260,7 @@ function Draw {
     Write-Host "  ${DIM}─────────────────────────────────${R}      "
 
     # Items (with viewport scrolling)
-    for ($i = 0; $i -lt $maxShow; $i++) {
+    for ($i = 0; $i -lt $script:maxShow; $i++) {
         $itemIdx = $viewOffset + $i
         if ($itemIdx -lt $items.Count) {
             $name = $items[$itemIdx]
@@ -266,10 +276,10 @@ function Draw {
 
     # Footer with position indicator
     Write-Host ""
-    if ($items.Count -gt $maxShow) {
-        Write-Host "  ${DIM}↑↓${R} navigate  ${DIM}($($sel+1)/$($items.Count))${R}  ${DIM}esc${R} quit     "
+    if ($items.Count -gt $script:maxShow) {
+        Write-Host "  ${DIM}↑↓${R} navigate  ${DIM}($($sel+1)/$($items.Count))${R}  ${DIM}esc${R} quit     " -NoNewline
     } else {
-        Write-Host "  ${DIM}↑↓${R} navigate  ${DIM}enter${R} select  ${DIM}esc${R} quit     "
+        Write-Host "  ${DIM}↑↓${R} navigate  ${DIM}enter${R} select  ${DIM}esc${R} quit     " -NoNewline
     }
 }
 
@@ -280,20 +290,26 @@ function FilterList {
     return @($items | Where-Object { $_.ToLower().Contains($q) })
 }
 
-# Setup
-Clear-Host
-Write-Host "${HID}" -NoNewline
+# Setup - ANSI clear + cursor home (avoids CursorPosition.Y bug in Windows Terminal)
+Write-Host "$([char]27)[2J$([char]27)[H${HID}" -NoNewline
 Write-Host ""
 Write-Host "  ${CYN}qk${R} ${DIM}· select project${R}"
 Write-Host ""
 
-$startY = $Host.UI.RawUI.CursorPosition.Y
+$startY = 3
+$termH = $Host.UI.RawUI.WindowSize.Height
+$maxShow = [Math]::Max(1, $termH - $startY - 4)
 $filtered = $all
 Draw $filtered $sel $filter $startY $viewOffset
 
 # Main loop
 while ($true) {
-    $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    try {
+        $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    } catch {
+        Start-Sleep -Milliseconds 50
+        continue
+    }
     $vk = $key.VirtualKeyCode
     $ch = $key.Character
 
@@ -343,7 +359,7 @@ while ($true) {
     if ($vk -eq 8) {
         if ($filter.Length -gt 0) {
             $filter = $filter.Substring(0, $filter.Length - 1)
-            $filtered = FilterList $all $filter
+            $filtered = @(FilterList $all $filter)
             $sel = 0
             $viewOffset = 0
             Draw $filtered $sel $filter $startY $viewOffset
@@ -352,9 +368,10 @@ while ($true) {
     }
 
     # Printable character - add to filter
-    if ($ch -match '[\w\-\._]') {
+    $code = [int]$ch
+    if ($code -gt 32 -and $code -le 126) {
         $filter += $ch
-        $filtered = FilterList $all $filter
+        $filtered = @(FilterList $all $filter)
         $sel = 0
         $viewOffset = 0
         Draw $filtered $sel $filter $startY $viewOffset
