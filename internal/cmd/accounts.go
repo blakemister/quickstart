@@ -28,6 +28,7 @@ func runAccounts(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	config.EnsureDefaults(cfg)
 	accounts := tui.NewAccounts(cfg)
 	p := tea.NewProgram(accounts, tea.WithAltScreen())
 	_, err = p.Run()

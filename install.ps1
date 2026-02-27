@@ -13,7 +13,7 @@ $BY = [char]27 + '[93m'
 $BR = [char]27 + '[91m'
 $BB = [char]27 + '[1;97m'
 
-$line = $DG + ([string]::new('─', 38)) + $R
+$line = $DG + ([string]::new([char]0x2500, 38)) + $R
 
 # Logo
 Write-Host ""
@@ -26,11 +26,11 @@ Write-Host "  ${DG} ╚══▀▀═╝ ╚═╝  ╚═╝${R}"
 Write-Host ""
 Write-Host "  $line"
 
-# Build
+# Build (no -ldflags stripping — WDAC blocks binaries without Go build ID)
 Write-Host ""
 Write-Host "  ${BC}◆${R} ${BW}Building${R}"
 
-go build -ldflags="-s -w" -o qs.exe .
+go build -o qs.exe .
 if ($LASTEXITCODE -ne 0) {
     Write-Host "   ${BR}✗ Build failed${R}"
     exit 1

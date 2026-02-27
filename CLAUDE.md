@@ -87,7 +87,7 @@ monitors:
 
 Key points:
 - `projectsRoot` is the directory containing project subdirectories
-- `accounts` defines available AI tools — each has `id`, `label`, `command`, `args`, `icon`, `enabled`
+- `accounts` defines available AI tools — each has `id`, `label`, `command`, `args`, `authCmd`, `installCmd`, `icon`, `enabled`
 - `monitors` defines window layout per physical monitor — each has `layout` (full/vertical/horizontal/grid) and a list of `windows` with a `tool` reference
 - Config is always saved as version 4; older versions are migrated on load in memory
 - `DefaultConfigPath()` returns `~/.qs/config.yaml`
@@ -114,15 +114,13 @@ Monitor detection and window positioning use direct Win32 syscalls via `syscall.
 
 These are the built-in tool definitions (defined in `internal/config/accounts.go`):
 
-| ID | Command | Args | Enabled by default |
-|----|---------|------|--------------------|
-| `claude` | `claude` | `--dangerously-skip-permissions` | Yes |
-| `codex` | `codex` | `--dangerously-bypass-approvals-and-sandbox` | Yes |
-| `gemini` | `gemini` | `--yolo` | Yes |
-| `opencode` | `opencode` | (none) | Yes |
-| `cursor` | `agent` | (none) | Yes |
-| `aider` | `aider` | `--yes-always` | No |
-| `continue` | `continue` | (none) | No |
+| ID | Command | Args | InstallCmd | Enabled |
+|----|---------|------|------------|---------|
+| `claude` | `claude` | `--dangerously-skip-permissions` | `npm i -g @anthropic-ai/claude-code` | Yes |
+| `codex` | `codex` | `--dangerously-bypass-approvals-and-sandbox` | `npm i -g @openai/codex` | Yes |
+| `gemini` | `gemini` | `--yolo` | `npm i -g @google/gemini-cli` | Yes |
+| `opencode` | `opencode` | `--yolo` | `npm i -g opencode` | Yes |
+| `cursor` | `agent` | (none) | (none) | Yes |
 
 Users can add custom accounts through `qs setup` or `qs accounts`.
 

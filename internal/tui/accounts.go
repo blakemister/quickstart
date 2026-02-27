@@ -16,6 +16,11 @@ type authDoneMsg struct {
 	err error
 }
 
+// installDoneMsg is sent when an install process completes
+type installDoneMsg struct {
+	err error
+}
+
 // AccountsModel is the account management TUI
 type AccountsModel struct {
 	cfg        *config.Config
@@ -52,13 +57,14 @@ func NewAccounts(cfg *config.Config) AccountsModel {
 	accounts := make([]config.Account, len(cfg.Accounts))
 	for i, a := range cfg.Accounts {
 		accounts[i] = config.Account{
-			ID:      a.ID,
-			Label:   a.Label,
-			Command: a.Command,
-			Args:    append([]string{}, a.Args...),
-			AuthCmd: a.AuthCmd,
-			Icon:    a.Icon,
-			Enabled: a.Enabled,
+			ID:         a.ID,
+			Label:      a.Label,
+			Command:    a.Command,
+			Args:       append([]string{}, a.Args...),
+			AuthCmd:    a.AuthCmd,
+			InstallCmd: a.InstallCmd,
+			Icon:       a.Icon,
+			Enabled:    a.Enabled,
 		}
 	}
 
@@ -87,6 +93,14 @@ func (m AccountsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "Auth failed: " + msg.err.Error()
 		} else {
 			m.message = "Auth completed successfully"
+		}
+		return m, nil
+
+	case installDoneMsg:
+		if msg.err != nil {
+			m.message = "Install failed: " + msg.err.Error()
+		} else {
+			m.message = "Install completed successfully"
 		}
 		return m, nil
 
@@ -133,9 +147,21 @@ func (m AccountsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return authDoneMsg{err: err}
 			})
 
+		case msg.String() == "i":
+			a := m.accounts[m.cursor]
+			if !a.HasInstall() {
+				m.message = a.Label + " has no install command configured"
+				return m, nil
+			}
+			cmd, args := a.InstallCommand()
+			c := exec.Command(cmd, args...)
+			return m, tea.ExecProcess(c, func(err error) tea.Msg {
+				return installDoneMsg{err: err}
+			})
+
 		case msg.String() == "a":
 			m.adding = true
-			m.inputs = makeAccountFormInputs("", "", "", "", "")
+			m.inputs = makeAccountFormInputs("", "", "", "", "", "")
 			m.inputIdx = 0
 			m.inputs[0].Focus()
 			m.message = ""
@@ -144,7 +170,7 @@ func (m AccountsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.String() == "e":
 			a := m.accounts[m.cursor]
 			m.editing = true
-			m.inputs = makeAccountFormInputs(a.Label, a.Command, strings.Join(a.Args, " "), a.AuthCmd, a.Icon)
+			m.inputs = makeAccountFormInputs(a.Label, a.Command, strings.Join(a.Args, " "), a.AuthCmd, a.InstallCmd, a.Icon)
 			m.inputIdx = 0
 			m.inputs[0].Focus()
 			m.message = ""
@@ -217,7 +243,8 @@ func (m AccountsModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		command := m.inputs[1].Value()
 		args := m.inputs[2].Value()
 		authCmd := m.inputs[3].Value()
-		icon := m.inputs[4].Value()
+		installCmd := m.inputs[4].Value()
+		icon := m.inputs[5].Value()
 
 		if name == "" || command == "" {
 			m.message = "Name and command are required"
@@ -238,18 +265,20 @@ func (m AccountsModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.accounts[m.cursor].Command = command
 			m.accounts[m.cursor].Args = argList
 			m.accounts[m.cursor].AuthCmd = authCmd
+			m.accounts[m.cursor].InstallCmd = installCmd
 			m.accounts[m.cursor].Icon = icon
 			m.editing = false
 		} else {
 			id := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 			m.accounts = append(m.accounts, config.Account{
-				ID:      id,
-				Label:   name,
-				Command: command,
-				Args:    argList,
-				AuthCmd: authCmd,
-				Icon:    icon,
-				Enabled: true,
+				ID:         id,
+				Label:      name,
+				Command:    command,
+				Args:       argList,
+				AuthCmd:    authCmd,
+				InstallCmd: installCmd,
+				Icon:       icon,
+				Enabled:    true,
 			})
 			m.cursor = len(m.accounts) - 1
 			m.adding = false
@@ -337,7 +366,7 @@ func (m AccountsModel) View() string {
 		}
 		s.WriteString("  " + TitleStyle.Render(title) + "\n\n")
 
-		labels := []string{"Name", "Command", "Args", "Auth Cmd", "Icon"}
+		labels := []string{"Name", "Command", "Args", "Auth Cmd", "Install", "Icon"}
 		for i, input := range m.inputs {
 			active := i == m.inputIdx
 			label := DimStyle.Render(fmt.Sprintf("  %-8s", labels[i]))
@@ -373,6 +402,11 @@ func (m AccountsModel) View() string {
 			enabledMark = SuccessStyle.Render("[✓]")
 		}
 
+		pathMark := ErrorStyle.Render("✗")
+		if _, err := exec.LookPath(a.Command); err == nil {
+			pathMark = SuccessStyle.Render("✓")
+		}
+
 		prefix := "  "
 		if selected {
 			prefix = TitleStyle.Render("▸ ")
@@ -394,15 +428,15 @@ func (m AccountsModel) View() string {
 			keysBadge = DimStyle.Render(fmt.Sprintf(" [%d keys]", len(ak)))
 		}
 
-		s.WriteString(fmt.Sprintf("  %s %s %s  %s%s\n",
-			prefix, enabledMark, label, cmdStr, keysBadge))
+		s.WriteString(fmt.Sprintf("  %s %s %s  %s  %s%s\n",
+			prefix, enabledMark, label, pathMark, cmdStr, keysBadge))
 	}
 
 	if m.message != "" {
 		s.WriteString("\n  " + WarningStyle.Render(m.message) + "\n")
 	}
 
-	s.WriteString("\n  " + DimStyle.Render("Space toggle  a add  e edit  l login  k keys  d delete  Esc save & quit") + "\n")
+	s.WriteString("\n  " + DimStyle.Render("Space toggle  a add  e edit  i install  l login  k keys  d delete  Esc save & quit") + "\n")
 	return s.String()
 }
 
@@ -516,8 +550,8 @@ func makeKeyInputs() []textinput.Model {
 	return inputs
 }
 
-func makeAccountFormInputs(name, command, args, authCmd, icon string) []textinput.Model {
-	inputs := make([]textinput.Model, 5)
+func makeAccountFormInputs(name, command, args, authCmd, installCmd, icon string) []textinput.Model {
+	inputs := make([]textinput.Model, 6)
 
 	inputs[0] = textinput.New()
 	inputs[0].Placeholder = "Tool Name"
@@ -544,10 +578,16 @@ func makeAccountFormInputs(name, command, args, authCmd, icon string) []textinpu
 	inputs[3].SetValue(authCmd)
 
 	inputs[4] = textinput.New()
-	inputs[4].Placeholder = "⬜"
-	inputs[4].CharLimit = 4
-	inputs[4].Width = 10
-	inputs[4].SetValue(icon)
+	inputs[4].Placeholder = "npm i -g package-name"
+	inputs[4].CharLimit = 128
+	inputs[4].Width = 30
+	inputs[4].SetValue(installCmd)
+
+	inputs[5] = textinput.New()
+	inputs[5].Placeholder = "⬜"
+	inputs[5].CharLimit = 4
+	inputs[5].Width = 10
+	inputs[5].SetValue(icon)
 
 	return inputs
 }

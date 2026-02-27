@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -44,8 +45,9 @@ type LaunchConfig struct {
 	Y          int
 	Width      int
 	Height     int
-	Command    string   // executable name, e.g. "claude"
-	Args       []string // arguments, e.g. ["--dangerously-skip-permissions"]
+	Command    string            // executable name, e.g. "claude"
+	Args       []string          // arguments, e.g. ["--dangerously-skip-permissions"]
+	Env        map[string]string // extra env vars to inject (nil = inherit parent env as-is)
 }
 
 // LaunchResult holds the outcome of a terminal launch
@@ -145,6 +147,7 @@ func LaunchTerminal(cfg LaunchConfig) error {
 	args = append(args, cfg.Args...)
 
 	cmd := exec.Command("wt", args...)
+	applyEnv(cmd, cfg.Env)
 	return cmd.Start()
 }
 
@@ -161,6 +164,7 @@ func LaunchAll(configs []LaunchConfig) []LaunchResult {
 		args = append(args, cfg.Args...)
 
 		cmd := exec.Command("wt", args...)
+		applyEnv(cmd, cfg.Env)
 		if err := cmd.Start(); err != nil {
 			results[i].Err = fmt.Errorf("failed to launch: %w", err)
 		}
@@ -216,6 +220,7 @@ func LaunchAllWithCurrent(configs []LaunchConfig) LaunchAllWithCurrentResult {
 			cfg := configs[i]
 			args := []string{"--title", cfg.Title, "-d", cfg.WorkingDir, "qs"}
 			cmd := exec.Command("wt", args...)
+			applyEnv(cmd, cfg.Env)
 			if err := cmd.Start(); err != nil {
 				results[i].Err = fmt.Errorf("failed to launch: %w", err)
 			}
@@ -326,6 +331,18 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// applyEnv sets extra environment variables on a command.
+// If env is nil or empty, the command inherits the parent environment as-is.
+func applyEnv(cmd *exec.Cmd, env map[string]string) {
+	if len(env) == 0 {
+		return
+	}
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 }
 
 func setWindowPosition(hwnd uintptr, x, y, width, height int) error {

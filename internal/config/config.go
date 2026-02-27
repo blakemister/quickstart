@@ -222,13 +222,14 @@ func copyDefaultAccounts() []Account {
 	accounts := make([]Account, len(DefaultAccounts))
 	for i, a := range DefaultAccounts {
 		accounts[i] = Account{
-			ID:      a.ID,
-			Label:   a.Label,
-			Command: a.Command,
-			Args:    append([]string{}, a.Args...),
-			AuthCmd: a.AuthCmd,
-			Icon:    a.Icon,
-			Enabled: a.Enabled,
+			ID:         a.ID,
+			Label:      a.Label,
+			Command:    a.Command,
+			Args:       append([]string{}, a.Args...),
+			AuthCmd:    a.AuthCmd,
+			InstallCmd: a.InstallCmd,
+			Icon:       a.Icon,
+			Enabled:    a.Enabled,
 		}
 	}
 	return accounts
@@ -288,21 +289,30 @@ func EnsureDefaults(cfg *Config) {
 		}
 	}
 
-	ensureAuthDefaults(cfg)
+	ensureAccountDefaults(cfg)
 }
 
-// ensureAuthDefaults backfills auth commands for known default account IDs.
-func ensureAuthDefaults(cfg *Config) {
-	defaults := make(map[string]string)
+// ensureAccountDefaults backfills auth and install commands for known default account IDs.
+func ensureAccountDefaults(cfg *Config) {
+	authDefaults := make(map[string]string)
+	installDefaults := make(map[string]string)
 	for _, da := range DefaultAccounts {
 		if da.AuthCmd != "" {
-			defaults[da.ID] = da.AuthCmd
+			authDefaults[da.ID] = da.AuthCmd
+		}
+		if da.InstallCmd != "" {
+			installDefaults[da.ID] = da.InstallCmd
 		}
 	}
 	for i := range cfg.Accounts {
 		if cfg.Accounts[i].AuthCmd == "" {
-			if authCmd, ok := defaults[cfg.Accounts[i].ID]; ok {
+			if authCmd, ok := authDefaults[cfg.Accounts[i].ID]; ok {
 				cfg.Accounts[i].AuthCmd = authCmd
+			}
+		}
+		if cfg.Accounts[i].InstallCmd == "" {
+			if installCmd, ok := installDefaults[cfg.Accounts[i].ID]; ok {
+				cfg.Accounts[i].InstallCmd = installCmd
 			}
 		}
 	}

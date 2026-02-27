@@ -32,6 +32,7 @@ var windowsReservedNames = map[string]struct{}{
 // PickerModel is the two-stage project->account picker.
 type PickerModel struct {
 	cfg      *config.Config
+	keys     config.AccountKeys
 	stage    pickerStage
 	quitting bool
 	err      error
@@ -61,6 +62,7 @@ type PickerModel struct {
 func NewPicker(cfg *config.Config) PickerModel {
 	projects := scanProjects(cfg.ProjectsRoot)
 	accounts := config.EnabledAccounts(cfg.Accounts)
+	keys, _ := config.LoadKeys()
 
 	cursor := 0
 	if len(projects) > 0 {
@@ -83,6 +85,7 @@ func NewPicker(cfg *config.Config) PickerModel {
 
 	return PickerModel{
 		cfg:        cfg,
+		keys:       keys,
 		stage:      stageProject,
 		projects:   projects,
 		filtered:   projects,
@@ -264,6 +267,15 @@ func (m PickerModel) launchAccount(account config.Account) (tea.Model, tea.Cmd) 
 	projectDir := filepath.Join(m.cfg.ProjectsRoot, m.selected)
 	c := exec.Command(account.Command, account.Args...)
 	c.Dir = projectDir
+
+	// Inject API keys as env vars
+	accountKeys := config.KeysForAccount(m.keys, account.ID)
+	if len(accountKeys) > 0 {
+		c.Env = os.Environ()
+		for k, v := range accountKeys {
+			c.Env = append(c.Env, k+"="+v)
+		}
+	}
 
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
 		return execDoneMsg{err: err}
@@ -508,15 +520,22 @@ func (m PickerModel) viewAccount() string {
 	s.WriteString(fmt.Sprintf("  %s\n", dim.Render("---------------------------------")))
 
 	for i, a := range m.accounts {
+		keysBadge := ""
+		if ak := config.KeysForAccount(m.keys, a.ID); len(ak) > 0 {
+			keysBadge = dim.Render(fmt.Sprintf("[%d keys] ", len(ak)))
+		}
+
 		if i == m.accountIdx {
-			s.WriteString(fmt.Sprintf("  %s %s %s  %s\n",
+			s.WriteString(fmt.Sprintf("  %s %s %s%s  %s\n",
 				sel.Render(">"),
 				a.Icon,
+				keysBadge,
 				white.Render(a.Label),
 				dim.Render(a.FullCommand())))
 		} else {
-			s.WriteString(fmt.Sprintf("    %s %s  %s\n",
+			s.WriteString(fmt.Sprintf("    %s %s%s  %s\n",
 				a.Icon,
+				keysBadge,
 				dim.Render(a.Label),
 				dim.Render(a.FullCommand())))
 		}

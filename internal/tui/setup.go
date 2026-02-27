@@ -92,13 +92,14 @@ func NewSetup(existingCfg *config.Config) SetupModel {
 	accounts := make([]config.Account, len(config.DefaultAccounts))
 	for i, a := range config.DefaultAccounts {
 		accounts[i] = config.Account{
-			ID:      a.ID,
-			Label:   a.Label,
-			Command: a.Command,
-			Args:    append([]string{}, a.Args...),
-			AuthCmd: a.AuthCmd,
-			Icon:    a.Icon,
-			Enabled: a.Enabled,
+			ID:         a.ID,
+			Label:      a.Label,
+			Command:    a.Command,
+			Args:       append([]string{}, a.Args...),
+			AuthCmd:    a.AuthCmd,
+			InstallCmd: a.InstallCmd,
+			Icon:       a.Icon,
+			Enabled:    a.Enabled,
 		}
 	}
 
@@ -107,13 +108,14 @@ func NewSetup(existingCfg *config.Config) SetupModel {
 		accounts = make([]config.Account, len(existingCfg.Accounts))
 		for i, a := range existingCfg.Accounts {
 			accounts[i] = config.Account{
-				ID:      a.ID,
-				Label:   a.Label,
-				Command: a.Command,
-				Args:    append([]string{}, a.Args...),
-				AuthCmd: a.AuthCmd,
-				Icon:    a.Icon,
-				Enabled: a.Enabled,
+				ID:         a.ID,
+				Label:      a.Label,
+				Command:    a.Command,
+				Args:       append([]string{}, a.Args...),
+				AuthCmd:    a.AuthCmd,
+				InstallCmd: a.InstallCmd,
+				Icon:       a.Icon,
+				Enabled:    a.Enabled,
 			}
 		}
 	}
@@ -146,6 +148,14 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.authMessage = "Auth failed: " + msg.err.Error()
 		} else {
 			m.authMessage = "Auth completed successfully"
+		}
+		return m, nil
+
+	case installDoneMsg:
+		if msg.err != nil {
+			m.authMessage = "Install failed: " + msg.err.Error()
+		} else {
+			m.authMessage = "Install completed successfully"
 		}
 		return m, nil
 
@@ -325,6 +335,18 @@ func (m SetupModel) updateAccounts(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.ExecProcess(c, func(err error) tea.Msg {
 			return authDoneMsg{err: err}
 		})
+	case msg.String() == "i":
+		a := m.accounts[m.accountIdx]
+		if !a.HasInstall() {
+			m.authMessage = a.Label + " has no install command configured"
+			return m, nil
+		}
+		m.authMessage = ""
+		cmd, args := a.InstallCommand()
+		c := exec.Command(cmd, args...)
+		return m, tea.ExecProcess(c, func(err error) tea.Msg {
+			return installDoneMsg{err: err}
+		})
 	}
 	return m, nil
 }
@@ -378,7 +400,8 @@ func (m SetupModel) updateAddAccount(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		command := m.addInputs[1].Value()
 		args := m.addInputs[2].Value()
 		authCmd := m.addInputs[3].Value()
-		icon := m.addInputs[4].Value()
+		installCmd := m.addInputs[4].Value()
+		icon := m.addInputs[5].Value()
 
 		if name == "" || command == "" {
 			return m, nil
@@ -395,13 +418,14 @@ func (m SetupModel) updateAddAccount(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		m.accounts = append(m.accounts, config.Account{
-			ID:      id,
-			Label:   name,
-			Command: command,
-			Args:    argList,
-			AuthCmd: authCmd,
-			Icon:    icon,
-			Enabled: true,
+			ID:         id,
+			Label:      name,
+			Command:    command,
+			Args:       argList,
+			AuthCmd:    authCmd,
+			InstallCmd: installCmd,
+			Icon:       icon,
+			Enabled:    true,
 		})
 		m.addingAccount = false
 		m.accountIdx = len(m.accounts) - 1
@@ -729,7 +753,7 @@ func (m SetupModel) viewAccounts() string {
 		s.WriteString("\n  " + WarningStyle.Render(m.authMessage) + "\n")
 	}
 
-	s.WriteString("\n  " + DimStyle.Render("Space toggle  a add  l login  Enter to continue  Esc back") + "\n")
+	s.WriteString("\n  " + DimStyle.Render("Space toggle  a add  i install  l login  Enter to continue  Esc back") + "\n")
 	return s.String()
 }
 
@@ -739,7 +763,7 @@ func (m SetupModel) viewAddAccount() string {
 	s.WriteString("\n")
 	s.WriteString("  " + TitleStyle.Render("Add Account") + "\n\n")
 
-	labels := []string{"Name", "Command", "Args", "Auth Cmd", "Icon"}
+	labels := []string{"Name", "Command", "Args", "Auth Cmd", "Install", "Icon"}
 	for i, input := range m.addInputs {
 		active := i == m.addInputIdx
 		label := DimStyle.Render(labels[i] + ":")
@@ -951,7 +975,7 @@ func renderLayoutPreview(count int) string {
 }
 
 func makeAddAccountInputs() []textinput.Model {
-	inputs := make([]textinput.Model, 5)
+	inputs := make([]textinput.Model, 6)
 
 	inputs[0] = textinput.New()
 	inputs[0].Placeholder = "My Tool"
@@ -974,9 +998,14 @@ func makeAddAccountInputs() []textinput.Model {
 	inputs[3].Width = 30
 
 	inputs[4] = textinput.New()
-	inputs[4].Placeholder = "⬜"
-	inputs[4].CharLimit = 4
-	inputs[4].Width = 10
+	inputs[4].Placeholder = "npm i -g package-name"
+	inputs[4].CharLimit = 128
+	inputs[4].Width = 30
+
+	inputs[5] = textinput.New()
+	inputs[5].Placeholder = "⬜"
+	inputs[5].CharLimit = 4
+	inputs[5].Width = 10
 
 	return inputs
 }

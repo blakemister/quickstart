@@ -7,8 +7,8 @@ import (
 )
 
 func TestDefaultAccounts(t *testing.T) {
-	if len(DefaultAccounts) != 7 {
-		t.Fatalf("expected 7 default accounts, got %d", len(DefaultAccounts))
+	if len(DefaultAccounts) != 5 {
+		t.Fatalf("expected 5 default accounts, got %d", len(DefaultAccounts))
 	}
 
 	// Check first account is Claude
@@ -22,13 +22,13 @@ func TestDefaultAccounts(t *testing.T) {
 		t.Error("expected first account to be enabled")
 	}
 
-	// Check that Aider is disabled by default
-	aider := AccountByID(DefaultAccounts, "aider")
-	if aider == nil {
-		t.Fatal("expected to find aider account")
+	// Check that cursor exists and is enabled
+	cursor := AccountByID(DefaultAccounts, "cursor")
+	if cursor == nil {
+		t.Fatal("expected to find cursor account")
 	}
-	if aider.Enabled {
-		t.Error("expected aider to be disabled by default")
+	if !cursor.Enabled {
+		t.Error("expected cursor to be enabled by default")
 	}
 }
 
@@ -521,6 +521,144 @@ func TestEnsureAuthDefaults(t *testing.T) {
 	}
 	if custom.AuthCmd != "" {
 		t.Errorf("expected custom AuthCmd to remain empty, got %q", custom.AuthCmd)
+	}
+}
+
+func TestAccountInstallCommand(t *testing.T) {
+	tests := []struct {
+		installCmd     string
+		wantCmd        string
+		wantArgs       []string
+		wantHasInstall bool
+	}{
+		{"npm i -g @anthropic-ai/claude-code", "npm", []string{"i", "-g", "@anthropic-ai/claude-code"}, true},
+		{"pip install aider-chat", "pip", []string{"install", "aider-chat"}, true},
+		{"npm i -g opencode", "npm", []string{"i", "-g", "opencode"}, true},
+		{"", "", nil, false},
+		{"  ", "", nil, false},
+	}
+
+	for _, tt := range tests {
+		a := Account{InstallCmd: tt.installCmd}
+
+		gotCmd, gotArgs := a.InstallCommand()
+		if gotCmd != tt.wantCmd {
+			t.Errorf("InstallCommand(%q) cmd = %q, want %q", tt.installCmd, gotCmd, tt.wantCmd)
+		}
+		if len(gotArgs) == 0 && len(tt.wantArgs) == 0 {
+			// both empty, ok
+		} else if len(gotArgs) != len(tt.wantArgs) {
+			t.Errorf("InstallCommand(%q) args len = %d, want %d", tt.installCmd, len(gotArgs), len(tt.wantArgs))
+		} else {
+			for i := range gotArgs {
+				if gotArgs[i] != tt.wantArgs[i] {
+					t.Errorf("InstallCommand(%q) args[%d] = %q, want %q", tt.installCmd, i, gotArgs[i], tt.wantArgs[i])
+				}
+			}
+		}
+
+		if got := a.HasInstall(); got != tt.wantHasInstall {
+			t.Errorf("HasInstall(%q) = %v, want %v", tt.installCmd, got, tt.wantHasInstall)
+		}
+	}
+}
+
+func TestInstallCmdRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	cfg := &Config{
+		Version:        4,
+		ProjectsRoot:   "/test",
+		DefaultAccount: "claude",
+		Accounts: []Account{
+			{ID: "claude", Label: "Claude", Command: "claude", InstallCmd: "npm i -g @anthropic-ai/claude-code", Enabled: true},
+			{ID: "aider", Label: "Aider", Command: "aider", Enabled: true},
+		},
+		Monitors: []MonitorConfig{
+			{Layout: "full", Windows: []WindowConfig{{Tool: "claude"}}},
+		},
+	}
+
+	if err := Save(cfg, path); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Verify omitempty: aider has no installCmd, so it shouldn't appear in YAML
+	data, _ := os.ReadFile(path)
+	yamlStr := string(data)
+	if !contains(yamlStr, "installCmd") {
+		t.Error("expected installCmd to appear in saved YAML for claude")
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Verify Claude's install command survived round-trip
+	claude := AccountByID(loaded.Accounts, "claude")
+	if claude == nil {
+		t.Fatal("expected to find claude account")
+	}
+	if claude.InstallCmd != "npm i -g @anthropic-ai/claude-code" {
+		t.Errorf("expected InstallCmd 'npm i -g @anthropic-ai/claude-code', got %q", claude.InstallCmd)
+	}
+	if !claude.HasInstall() {
+		t.Error("expected claude HasInstall() to be true")
+	}
+
+	// Verify Aider has no install command
+	aider := AccountByID(loaded.Accounts, "aider")
+	if aider == nil {
+		t.Fatal("expected to find aider account")
+	}
+	if aider.InstallCmd != "" {
+		t.Errorf("expected empty InstallCmd for aider, got %q", aider.InstallCmd)
+	}
+	if aider.HasInstall() {
+		t.Error("expected aider HasInstall() to be false")
+	}
+}
+
+func TestEnsureInstallDefaults(t *testing.T) {
+	cfg := &Config{
+		Accounts: []Account{
+			{ID: "claude", Label: "Claude", Command: "claude", Enabled: true},
+			{ID: "gemini", Label: "Gemini", Command: "gemini", Enabled: true},
+			{ID: "custom", Label: "Custom", Command: "custom", Enabled: true},
+		},
+	}
+	EnsureDefaults(cfg)
+
+	// claude should get backfilled install command
+	claude := AccountByID(cfg.Accounts, "claude")
+	if claude == nil {
+		t.Fatal("expected claude account")
+	}
+	if claude.InstallCmd == "" {
+		t.Error("expected claude InstallCmd to be backfilled")
+	}
+	if claude.InstallCmd != "npm i -g @anthropic-ai/claude-code" {
+		t.Errorf("expected claude InstallCmd 'npm i -g @anthropic-ai/claude-code', got %q", claude.InstallCmd)
+	}
+
+	// gemini should get backfilled install command
+	gemini := AccountByID(cfg.Accounts, "gemini")
+	if gemini == nil {
+		t.Fatal("expected gemini account")
+	}
+	if gemini.InstallCmd == "" {
+		t.Error("expected gemini InstallCmd to be backfilled")
+	}
+
+	// custom should remain empty (not a known default)
+	custom := AccountByID(cfg.Accounts, "custom")
+	if custom == nil {
+		t.Fatal("expected custom account")
+	}
+	if custom.InstallCmd != "" {
+		t.Errorf("expected custom InstallCmd to remain empty, got %q", custom.InstallCmd)
 	}
 }
 

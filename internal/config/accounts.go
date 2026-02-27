@@ -4,13 +4,14 @@ import "strings"
 
 // Account represents a configured AI tool account
 type Account struct {
-	ID      string   `yaml:"id"`
-	Label   string   `yaml:"label"`
-	Command string   `yaml:"command"`
-	Args    []string `yaml:"args"`
-	AuthCmd string   `yaml:"authCmd,omitempty"`
-	Icon    string   `yaml:"icon"`
-	Enabled bool     `yaml:"enabled"`
+	ID         string   `yaml:"id"`
+	Label      string   `yaml:"label"`
+	Command    string   `yaml:"command"`
+	Args       []string `yaml:"args"`
+	AuthCmd    string   `yaml:"authCmd,omitempty"`
+	InstallCmd string   `yaml:"installCmd,omitempty"`
+	Icon       string   `yaml:"icon"`
+	Enabled    bool     `yaml:"enabled"`
 }
 
 // AuthCommand splits AuthCmd into command and args.
@@ -27,43 +28,61 @@ func (a *Account) HasAuth() bool {
 	return strings.TrimSpace(a.AuthCmd) != ""
 }
 
+// InstallCommand splits InstallCmd into command and args.
+func (a *Account) InstallCommand() (string, []string) {
+	parts := strings.Fields(a.InstallCmd)
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return parts[0], parts[1:]
+}
+
+// HasInstall returns true if this account has an install command configured.
+func (a *Account) HasInstall() bool {
+	return strings.TrimSpace(a.InstallCmd) != ""
+}
+
 // DefaultAccounts returns the built-in account definitions
 var DefaultAccounts = []Account{
 	{
-		ID:      "claude",
-		Label:   "Claude Code",
-		Command: "claude",
-		Args:    []string{"--dangerously-skip-permissions"},
-		AuthCmd: "claude /login",
-		Icon:    "\U0001F7E0",
-		Enabled: true,
+		ID:         "claude",
+		Label:      "Claude Code",
+		Command:    "claude",
+		Args:       []string{"--dangerously-skip-permissions"},
+		AuthCmd:    "claude /login",
+		InstallCmd: "npm i -g @anthropic-ai/claude-code",
+		Icon:       "\U0001F7E0",
+		Enabled:    true,
 	},
 	{
-		ID:      "codex",
-		Label:   "OpenAI Codex",
-		Command: "codex",
-		Args:    []string{"--dangerously-bypass-approvals-and-sandbox"},
-		AuthCmd: "codex login",
-		Icon:    "\U0001F7E2",
-		Enabled: true,
+		ID:         "codex",
+		Label:      "OpenAI Codex",
+		Command:    "codex",
+		Args:       []string{"--dangerously-bypass-approvals-and-sandbox"},
+		AuthCmd:    "codex login",
+		InstallCmd: "npm i -g @openai/codex",
+		Icon:       "\U0001F7E2",
+		Enabled:    true,
 	},
 	{
-		ID:      "gemini",
-		Label:   "Gemini CLI",
-		Command: "gemini",
-		Args:    []string{"--yolo"},
-		AuthCmd: "gemini",
-		Icon:    "\U0001F535",
-		Enabled: true,
+		ID:         "gemini",
+		Label:      "Gemini CLI",
+		Command:    "gemini",
+		Args:       []string{"--yolo"},
+		AuthCmd:    "gemini",
+		InstallCmd: "npm i -g @google/gemini-cli",
+		Icon:       "\U0001F535",
+		Enabled:    true,
 	},
 	{
-		ID:      "opencode",
-		Label:   "OpenCode (z.ai)",
-		Command: "opencode",
-		Args:    []string{"--yolo"},
-		AuthCmd: "opencode auth login",
-		Icon:    "\u26AB",
-		Enabled: true,
+		ID:         "opencode",
+		Label:      "OpenCode (z.ai)",
+		Command:    "opencode",
+		Args:       []string{"--yolo"},
+		AuthCmd:    "opencode auth login",
+		InstallCmd: "npm i -g opencode",
+		Icon:       "\u26AB",
+		Enabled:    true,
 	},
 	{
 		ID:      "cursor",
@@ -73,22 +92,6 @@ var DefaultAccounts = []Account{
 		AuthCmd: "agent login",
 		Icon:    "\U0001F7E1",
 		Enabled: true,
-	},
-	{
-		ID:      "aider",
-		Label:   "Aider",
-		Command: "aider",
-		Args:    []string{"--yes-always"},
-		Icon:    "\U0001F7E3",
-		Enabled: false,
-	},
-	{
-		ID:      "continue",
-		Label:   "Continue Dev",
-		Command: "continue",
-		Args:    []string{},
-		Icon:    "\U0001F537",
-		Enabled: false,
 	},
 }
 
