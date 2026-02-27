@@ -1,6 +1,62 @@
 package config
 
-import "testing"
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestAuthStatusCmds_HasClaude(t *testing.T) {
+	cmd, ok := AuthStatusCmds["claude"]
+	if !ok {
+		t.Fatal("expected AuthStatusCmds to have entry for 'claude'")
+	}
+	if cmd != "claude auth status" {
+		t.Errorf("expected 'claude auth status', got %q", cmd)
+	}
+}
+
+func TestParseAuthStatus_Valid(t *testing.T) {
+	input := []byte(`{"loggedIn":true,"authMethod":"claude.ai","email":"tech@eckmedia.com","orgName":"EckMedia","subscriptionType":"team"}`)
+	email, org, err := ParseAuthStatus(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if email != "tech@eckmedia.com" {
+		t.Errorf("expected email 'tech@eckmedia.com', got %q", email)
+	}
+	if org != "EckMedia" {
+		t.Errorf("expected org 'EckMedia', got %q", org)
+	}
+}
+
+func TestParseAuthStatus_Minimal(t *testing.T) {
+	input := []byte(`{"email":"a@b.com"}`)
+	email, org, err := ParseAuthStatus(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if email != "a@b.com" {
+		t.Errorf("expected 'a@b.com', got %q", email)
+	}
+	if org != "" {
+		t.Errorf("expected empty org, got %q", org)
+	}
+}
+
+func TestParseAuthStatus_InvalidJSON(t *testing.T) {
+	_, _, err := ParseAuthStatus([]byte(`not json`))
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestAccountAuthUser_OmitEmpty(t *testing.T) {
+	a := Account{ID: "test", Label: "Test", Command: "test", Enabled: true}
+	if a.AuthUser != "" {
+		t.Errorf("expected empty AuthUser, got %q", a.AuthUser)
+	}
+}
 
 func TestUniqueAccountID_NoCollision(t *testing.T) {
 	existing := []Account{
@@ -92,6 +148,30 @@ func TestCloneAccount_IDCollision(t *testing.T) {
 
 	if clone.ID != "claude-work-2" {
 		t.Errorf("expected 'claude-work-2' on collision, got %q", clone.ID)
+	}
+}
+
+func TestConfigDirEnvVars(t *testing.T) {
+	envVar, ok := ConfigDirEnvVars["claude"]
+	if !ok {
+		t.Fatal("expected ConfigDirEnvVars to have entry for 'claude'")
+	}
+	if envVar != "CLAUDE_CONFIG_DIR" {
+		t.Errorf("expected CLAUDE_CONFIG_DIR, got %q", envVar)
+	}
+}
+
+func TestAccountConfigDir(t *testing.T) {
+	dir := AccountConfigDir("claude-work")
+	if dir == "" {
+		t.Fatal("expected non-empty path")
+	}
+	if !filepath.IsAbs(dir) {
+		t.Errorf("expected absolute path, got %q", dir)
+	}
+	// Should contain .qs/auth/<id>
+	if !strings.Contains(dir, ".qs") || !strings.Contains(dir, "auth") || !strings.Contains(dir, "claude-work") {
+		t.Errorf("expected path to contain .qs/auth/claude-work, got %q", dir)
 	}
 }
 

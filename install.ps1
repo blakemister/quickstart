@@ -26,7 +26,7 @@ Write-Host "  ${DG} ╚══▀▀═╝ ╚═╝  ╚═╝${R}"
 Write-Host ""
 Write-Host "  $line"
 
-# Build (no -ldflags stripping — WDAC blocks binaries without Go build ID)
+# Build (no -ldflags stripping - WDAC blocks binaries without Go build ID)
 Write-Host ""
 Write-Host "  ${BC}◆${R} ${BW}Building${R}"
 

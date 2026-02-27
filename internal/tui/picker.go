@@ -287,13 +287,7 @@ func (m PickerModel) launchAccount(account config.Account) (tea.Model, tea.Cmd) 
 	c.Dir = projectDir
 
 	// Inject API keys as env vars
-	accountKeys := config.KeysForAccount(m.keys, account.ID)
-	if len(accountKeys) > 0 {
-		c.Env = os.Environ()
-		for k, v := range accountKeys {
-			c.Env = append(c.Env, k+"="+v)
-		}
-	}
+	applyAccountEnv(c, m.keys, account.ID)
 
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
 		return execDoneMsg{err: err}
@@ -541,7 +535,9 @@ func (m PickerModel) viewAccount() string {
 
 	for i, a := range m.accounts {
 		authBadge := ""
-		if ak := config.KeysForAccount(m.keys, a.ID); len(ak) > 0 {
+		if a.AuthUser != "" {
+			authBadge = green.Render("(" + a.AuthUser + ") ")
+		} else if ak := config.KeysForAccount(m.keys, a.ID); len(ak) > 0 {
 			authBadge = green.Render("(API) ")
 		} else if a.HasAuth() {
 			authBadge = dim.Render("(sub) ")

@@ -1,14 +1,30 @@
 package config
 
 import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
+// ConfigDirEnvVars maps tool commands to their config dir env var name.
+// Setting this env var gives the tool an isolated auth/config session.
+var ConfigDirEnvVars = map[string]string{
+	"claude": "CLAUDE_CONFIG_DIR",
+}
+
+// AccountConfigDir returns the isolated config directory for an account (~/.qs/auth/<accountID>/).
+func AccountConfigDir(accountID string) string {
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".qs", "auth", accountID)
+}
+
 // SuggestedEnvVars maps tool commands to their conventional API key env var names.
 var SuggestedEnvVars = map[string][]string{
-	"claude":   {"ANTHROPIC_API_KEY"},
+	"claude":   {"ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"},
 	"codex":    {"OPENAI_API_KEY"},
 	"gemini":   {"GEMINI_API_KEY"},
 	"agent":    {"CURSOR_API_KEY"},
@@ -59,7 +75,49 @@ func CloneAccount(src Account, newLabel string, existing []Account) Account {
 		InstallCmd: src.InstallCmd,
 		Icon:       src.Icon,
 		Enabled:    true,
+		AuthUser:   "", // new clone needs fresh auth
 	}
+}
+
+// AuthStatusCmds maps tool commands to their auth status command.
+// The command should return JSON with at least "email" and "orgName" fields.
+var AuthStatusCmds = map[string]string{
+	"claude": "claude auth status",
+}
+
+// authStatusResult is the JSON structure returned by auth status commands.
+type authStatusResult struct {
+	Email   string `json:"email"`
+	OrgName string `json:"orgName"`
+}
+
+// ParseAuthStatus extracts email and org from auth status JSON output.
+func ParseAuthStatus(data []byte) (email string, org string, err error) {
+	var result authStatusResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return "", "", err
+	}
+	return result.Email, result.OrgName, nil
+}
+
+// ProbeAuthUser runs the auth status command for the given tool and returns email and org.
+// Returns empty strings (no error) if the tool has no auth status command.
+func ProbeAuthUser(command string, env []string) (email string, org string, err error) {
+	statusCmd, ok := AuthStatusCmds[command]
+	if !ok {
+		return "", "", nil
+	}
+
+	parts := strings.Fields(statusCmd)
+	c := exec.Command(parts[0], parts[1:]...)
+	if len(env) > 0 {
+		c.Env = append(os.Environ(), env...)
+	}
+	out, err := c.Output()
+	if err != nil {
+		return "", "", err
+	}
+	return ParseAuthStatus(out)
 }
 
 // Account represents a configured AI tool account
@@ -72,6 +130,7 @@ type Account struct {
 	InstallCmd string   `yaml:"installCmd,omitempty"`
 	Icon       string   `yaml:"icon"`
 	Enabled    bool     `yaml:"enabled"`
+	AuthUser   string   `yaml:"authUser,omitempty"`
 }
 
 // AuthCommand splits AuthCmd into command and args.

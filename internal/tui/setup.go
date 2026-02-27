@@ -47,12 +47,19 @@ type SetupModel struct {
 	accounts     []config.Account
 	accountIdx   int
 
-	// Step 3 sub-form: add/clone account
-	addingAccount  bool
-	cloningAccount bool
-	addInputs      []textinput.Model
-	addInputIdx    int
-	authMessage    string
+	// Step 3 sub-form: guided add wizard
+	addStep      addStep
+	addMethod    addMethod
+	addMethodIdx int
+	addTools     []config.Account
+	addToolIdx   int
+	addLabel     textinput.Model
+	addInputs    []textinput.Model // for custom path
+	addInputIdx  int
+	addKeyName   textinput.Model
+	addKeyValue  textinput.Model
+	addKeyIdx    int
+	authMessage  string
 
 	// Step 4: API Keys
 	keys           config.AccountKeys
@@ -101,6 +108,7 @@ func NewSetup(existingCfg *config.Config) SetupModel {
 			InstallCmd: a.InstallCmd,
 			Icon:       a.Icon,
 			Enabled:    a.Enabled,
+			AuthUser:   a.AuthUser,
 		}
 	}
 
@@ -117,6 +125,7 @@ func NewSetup(existingCfg *config.Config) SetupModel {
 				InstallCmd: a.InstallCmd,
 				Icon:       a.Icon,
 				Enabled:    a.Enabled,
+				AuthUser:   a.AuthUser,
 			}
 		}
 	}
@@ -148,6 +157,33 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.authMessage = "Auth failed: " + msg.err.Error()
 		} else {
+			m.authMessage = "Auth completed — probing status..."
+			accountID := msg.accountID
+			a := config.AccountByID(m.accounts, accountID)
+			if a != nil {
+				env := accountEnvSlice(m.keys, accountID)
+				return m, probeAuthCmd(accountID, a.Command, env)
+			}
+			m.authMessage = "Auth completed successfully"
+		}
+		return m, nil
+
+	case authProbeMsg:
+		if msg.err != nil {
+			m.authMessage = "Auth OK (could not probe status: " + msg.err.Error() + ")"
+		} else if msg.email != "" {
+			authUser := msg.email
+			if msg.org != "" {
+				authUser += " (" + msg.org + ")"
+			}
+			for i := range m.accounts {
+				if m.accounts[i].ID == msg.accountID {
+					m.accounts[i].AuthUser = authUser
+					break
+				}
+			}
+			m.authMessage = "Logged in as " + authUser
+		} else {
 			m.authMessage = "Auth completed successfully"
 		}
 		return m, nil
@@ -176,8 +212,12 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Handle add/clone account sub-form
-		if m.addingAccount || m.cloningAccount {
+		// Handle guided add wizard
+		if m.addStep != addStepNone {
+			return m.updateSetupAddWizard(msg)
+		}
+		// Handle custom form
+		if len(m.addInputs) > 0 {
 			return m.updateAddAccount(msg)
 		}
 
@@ -206,7 +246,7 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if m.addingAccount || m.cloningAccount {
+	if len(m.addInputs) > 0 {
 		var cmd tea.Cmd
 		m.addInputs[m.addInputIdx], cmd = m.addInputs[m.addInputIdx].Update(msg)
 		return m, cmd
@@ -319,25 +359,10 @@ func (m SetupModel) updateAccounts(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, DefaultKeyMap.Space):
 		m.accounts[m.accountIdx].Enabled = !m.accounts[m.accountIdx].Enabled
 	case msg.String() == "a":
-		m.addingAccount = true
-		m.addInputs = makeAddAccountInputs()
-		m.addInputIdx = 0
-		m.addInputs[0].Focus()
-		return m, textinput.Blink
-	case msg.String() == "c":
-		a := m.accounts[m.accountIdx]
-		m.cloningAccount = true
-		m.addInputs = makeAccountFormInputs(
-			a.Label+" (2)",
-			a.Command,
-			strings.Join(a.Args, " "),
-			a.AuthCmd,
-			a.InstallCmd,
-			a.Icon,
-		)
-		m.addInputIdx = 0
-		m.addInputs[0].Focus()
-		return m, textinput.Blink
+		m.addStep = addStepMethod
+		m.addMethodIdx = 0
+		m.authMessage = ""
+		return m, nil
 	case msg.String() == "l":
 		a := m.accounts[m.accountIdx]
 		if !a.HasAuth() {
@@ -347,8 +372,10 @@ func (m SetupModel) updateAccounts(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.authMessage = ""
 		cmd, args := a.AuthCommand()
 		c := exec.Command(cmd, args...)
+		applyAccountEnv(c, m.keys, a.ID)
+		accountID := a.ID
 		return m, tea.ExecProcess(c, func(err error) tea.Msg {
-			return authDoneMsg{err: err}
+			return authDoneMsg{err: err, accountID: accountID}
 		})
 	case msg.String() == "i":
 		a := m.accounts[m.accountIdx]
@@ -359,6 +386,7 @@ func (m SetupModel) updateAccounts(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.authMessage = ""
 		cmd, args := a.InstallCommand()
 		c := exec.Command(cmd, args...)
+		applyAccountEnv(c, m.keys, a.ID)
 		return m, tea.ExecProcess(c, func(err error) tea.Msg {
 			return installDoneMsg{err: err}
 		})
@@ -392,11 +420,205 @@ func (m SetupModel) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateSetupAddWizard handles the guided add flow in setup wizard.
+func (m SetupModel) updateSetupAddWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.addStep {
+	case addStepMethod:
+		return m.updateSetupAddMethod(msg)
+	case addStepTool:
+		return m.updateSetupAddTool(msg)
+	case addStepLabel:
+		return m.updateSetupAddLabel(msg)
+	case addStepKey:
+		return m.updateSetupAddKeyInput(msg)
+	}
+	return m, nil
+}
+
+func (m SetupModel) updateSetupAddMethod(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, DefaultKeyMap.Escape):
+		m.addStep = addStepNone
+		return m, nil
+	case key.Matches(msg, DefaultKeyMap.Up):
+		if m.addMethodIdx > 0 {
+			m.addMethodIdx--
+		}
+	case key.Matches(msg, DefaultKeyMap.Down):
+		if m.addMethodIdx < 2 {
+			m.addMethodIdx++
+		}
+	case key.Matches(msg, DefaultKeyMap.Enter):
+		switch m.addMethodIdx {
+		case 0:
+			m.addMethod = addMethodSub
+			m.addTools = toolsWithAuth()
+		case 1:
+			m.addMethod = addMethodAPI
+			m.addTools = toolsWithEnvVars()
+		case 2:
+			m.addMethod = addMethodCustom
+			m.addStep = addStepNone
+			m.addInputs = makeAddAccountInputs()
+			m.addInputIdx = 0
+			m.addInputs[0].Focus()
+			return m, textinput.Blink
+		}
+		if m.addMethod != addMethodCustom {
+			m.addStep = addStepTool
+			m.addToolIdx = 0
+		}
+	}
+	return m, nil
+}
+
+func (m SetupModel) updateSetupAddTool(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, DefaultKeyMap.Escape):
+		m.addStep = addStepMethod
+		return m, nil
+	case key.Matches(msg, DefaultKeyMap.Up):
+		if m.addToolIdx > 0 {
+			m.addToolIdx--
+		}
+	case key.Matches(msg, DefaultKeyMap.Down):
+		if m.addToolIdx < len(m.addTools)-1 {
+			m.addToolIdx++
+		}
+	case key.Matches(msg, DefaultKeyMap.Enter):
+		if len(m.addTools) == 0 {
+			return m, nil
+		}
+		tmpl := m.addTools[m.addToolIdx]
+		label := nextLabel(tmpl.Label, m.accounts)
+		m.addLabel = textinput.New()
+		m.addLabel.Placeholder = tmpl.Label
+		m.addLabel.CharLimit = 32
+		m.addLabel.Width = 30
+		m.addLabel.SetValue(label)
+		m.addLabel.Focus()
+		m.addStep = addStepLabel
+		return m, textinput.Blink
+	}
+	return m, nil
+}
+
+func (m SetupModel) updateSetupAddLabel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, DefaultKeyMap.Escape):
+		m.addStep = addStepTool
+		return m, nil
+	case key.Matches(msg, DefaultKeyMap.Enter):
+		label := m.addLabel.Value()
+		if label == "" {
+			m.authMessage = "Account name is required"
+			return m, nil
+		}
+		tmpl := m.addTools[m.addToolIdx]
+		newAcct := config.CloneAccount(tmpl, label, m.accounts)
+
+		if envVar, ok := config.ConfigDirEnvVars[newAcct.Command]; ok {
+			config.SetAccountKey(m.keys, newAcct.ID, envVar, config.AccountConfigDir(newAcct.ID))
+		}
+
+		m.accounts = append(m.accounts, newAcct)
+		m.accountIdx = len(m.accounts) - 1
+
+		if m.addMethod == addMethodSub {
+			m.addStep = addStepNone
+			if !newAcct.HasAuth() {
+				m.authMessage = "Account added (no auth command configured)"
+				return m, nil
+			}
+			cmd, args := newAcct.AuthCommand()
+			c := exec.Command(cmd, args...)
+			applyAccountEnv(c, m.keys, newAcct.ID)
+			accountID := newAcct.ID
+			m.authMessage = ""
+			return m, tea.ExecProcess(c, func(err error) tea.Msg {
+				return authDoneMsg{err: err, accountID: accountID}
+			})
+		}
+
+		// API key path
+		m.addStep = addStepKey
+		m.addKeyName = textinput.New()
+		m.addKeyName.Placeholder = "API_KEY_NAME"
+		m.addKeyName.CharLimit = 64
+		m.addKeyName.Width = 40
+		if vars, ok := config.SuggestedEnvVars[newAcct.Command]; ok && len(vars) > 0 {
+			m.addKeyName.SetValue(vars[0])
+		}
+		m.addKeyValue = textinput.New()
+		m.addKeyValue.Placeholder = "sk-..."
+		m.addKeyValue.CharLimit = 256
+		m.addKeyValue.Width = 40
+		m.addKeyValue.EchoMode = textinput.EchoPassword
+		m.addKeyIdx = 0
+		m.addKeyName.Focus()
+		return m, textinput.Blink
+
+	default:
+		var cmd tea.Cmd
+		m.addLabel, cmd = m.addLabel.Update(msg)
+		return m, cmd
+	}
+}
+
+func (m SetupModel) updateSetupAddKeyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, DefaultKeyMap.Escape):
+		m.addStep = addStepNone
+		m.authMessage = "Account added (no API key set)"
+		return m, nil
+	case key.Matches(msg, DefaultKeyMap.Tab):
+		if m.addKeyIdx == 0 {
+			m.addKeyName.Blur()
+			m.addKeyIdx = 1
+			m.addKeyValue.Focus()
+		} else {
+			m.addKeyValue.Blur()
+			m.addKeyIdx = 0
+			m.addKeyName.Focus()
+		}
+		return m, textinput.Blink
+	case key.Matches(msg, DefaultKeyMap.Enter):
+		if m.addKeyIdx == 0 {
+			m.addKeyName.Blur()
+			m.addKeyIdx = 1
+			m.addKeyValue.Focus()
+			return m, textinput.Blink
+		}
+		name := m.addKeyName.Value()
+		value := m.addKeyValue.Value()
+		if err := config.ValidateEnvVarName(name); err != nil {
+			m.authMessage = err.Error()
+			return m, nil
+		}
+		if value == "" {
+			m.authMessage = "Value cannot be empty"
+			return m, nil
+		}
+		accountID := m.accounts[m.accountIdx].ID
+		config.SetAccountKey(m.keys, accountID, name, value)
+		m.addStep = addStepNone
+		m.authMessage = "Account added with API key"
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		if m.addKeyIdx == 0 {
+			m.addKeyName, cmd = m.addKeyName.Update(msg)
+		} else {
+			m.addKeyValue, cmd = m.addKeyValue.Update(msg)
+		}
+		return m, cmd
+	}
+}
+
 func (m SetupModel) updateAddAccount(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, DefaultKeyMap.Escape):
-		m.addingAccount = false
-		m.cloningAccount = false
+		m.addInputs = nil
 		return m, nil
 	case key.Matches(msg, DefaultKeyMap.Tab):
 		m.addInputs[m.addInputIdx].Blur()
@@ -405,13 +627,11 @@ func (m SetupModel) updateAddAccount(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	case key.Matches(msg, DefaultKeyMap.Enter):
 		if m.addInputIdx < len(m.addInputs)-1 {
-			// Move to next field
 			m.addInputs[m.addInputIdx].Blur()
 			m.addInputIdx++
 			m.addInputs[m.addInputIdx].Focus()
 			return m, textinput.Blink
 		}
-		// Submit: create account
 		name := m.addInputs[0].Value()
 		command := m.addInputs[1].Value()
 		args := m.addInputs[2].Value()
@@ -443,13 +663,8 @@ func (m SetupModel) updateAddAccount(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			Icon:       icon,
 			Enabled:    true,
 		})
-		wasClone := m.cloningAccount
-		m.addingAccount = false
-		m.cloningAccount = false
+		m.addInputs = nil
 		m.accountIdx = len(m.accounts) - 1
-		if wasClone {
-			m.authMessage = "Cloned! Press l to log in to this account"
-		}
 		return m, nil
 	default:
 		var cmd tea.Cmd
@@ -618,7 +833,9 @@ func (m SetupModel) View() string {
 	case stepMonitors:
 		s.WriteString(m.viewMonitors())
 	case stepAccounts:
-		if m.addingAccount || m.cloningAccount {
+		if m.addStep != addStepNone {
+			s.WriteString(m.viewSetupAddWizard())
+		} else if len(m.addInputs) > 0 {
 			s.WriteString(m.viewAddAccount())
 		} else {
 			s.WriteString(m.viewAccounts())
@@ -765,8 +982,17 @@ func (m SetupModel) viewAccounts() string {
 			label = DimStyle.Render(a.Icon + " " + a.Label)
 		}
 
-		s.WriteString(fmt.Sprintf("  %s %s %s  %s  %s\n",
-			prefix, enabledMark, label, pathMark,
+		authBadge := ""
+		if a.AuthUser != "" {
+			authBadge = SuccessStyle.Render(" (" + a.AuthUser + ")")
+		} else if ak := config.KeysForAccount(m.keys, a.ID); len(ak) > 0 {
+			authBadge = SuccessStyle.Render(" (API)")
+		} else if a.HasAuth() {
+			authBadge = DimStyle.Render(" (sub)")
+		}
+
+		s.WriteString(fmt.Sprintf("  %s %s %s%s  %s  %s\n",
+			prefix, enabledMark, label, authBadge, pathMark,
 			DimStyle.Render(a.Command)))
 	}
 
@@ -779,7 +1005,7 @@ func (m SetupModel) viewAccounts() string {
 		s.WriteString("\n  " + WarningStyle.Render(m.authMessage) + "\n")
 	}
 
-	s.WriteString("\n  " + DimStyle.Render("Space toggle  a add  c clone  i install  l login  Enter to continue  Esc back") + "\n")
+	s.WriteString("\n  " + DimStyle.Render("Space toggle  a add  i install  l login  Enter to continue  Esc back") + "\n")
 	return s.String()
 }
 
@@ -787,11 +1013,7 @@ func (m SetupModel) viewAddAccount() string {
 	var s strings.Builder
 	s.WriteString(RenderSep())
 	s.WriteString("\n")
-	title := "Add Account"
-	if m.cloningAccount {
-		title = "Clone Account"
-	}
-	s.WriteString("  " + TitleStyle.Render(title) + "\n\n")
+	s.WriteString("  " + TitleStyle.Render("Add Account (Custom)") + "\n\n")
 
 	labels := []string{"Name", "Command", "Args", "Auth Cmd", "Install", "Icon"}
 	for i, input := range m.addInputs {
@@ -804,6 +1026,75 @@ func (m SetupModel) viewAddAccount() string {
 	}
 
 	s.WriteString("\n  " + DimStyle.Render("Tab next field  Enter submit  Esc cancel") + "\n")
+	return s.String()
+}
+
+func (m SetupModel) viewSetupAddWizard() string {
+	var s strings.Builder
+	s.WriteString(RenderSep())
+	s.WriteString("\n")
+
+	switch m.addStep {
+	case addStepMethod:
+		s.WriteString("  " + TitleStyle.Render("Add Account") + "\n\n")
+		s.WriteString("  " + DimStyle.Render("How do you want to authenticate?") + "\n\n")
+		methods := []string{"Subscription login", "API key", "Custom (advanced)"}
+		for i, label := range methods {
+			if i == m.addMethodIdx {
+				s.WriteString(fmt.Sprintf("  %s %s\n", TitleStyle.Render("▸"), WhiteStyle.Render(label)))
+			} else {
+				s.WriteString(fmt.Sprintf("    %s\n", DimStyle.Render(label)))
+			}
+		}
+		s.WriteString("\n  " + DimStyle.Render("↑↓ select  Enter choose  Esc cancel") + "\n")
+
+	case addStepTool:
+		methodName := "Subscription login"
+		if m.addMethod == addMethodAPI {
+			methodName = "API key"
+		}
+		s.WriteString("  " + TitleStyle.Render("Add Account") + " " + DimStyle.Render("— "+methodName) + "\n\n")
+		s.WriteString("  " + DimStyle.Render("Which tool?") + "\n\n")
+		if len(m.addTools) == 0 {
+			s.WriteString("  " + DimStyle.Render("No tools available for this method") + "\n")
+		} else {
+			for i, t := range m.addTools {
+				if i == m.addToolIdx {
+					s.WriteString(fmt.Sprintf("  %s %s %s\n", TitleStyle.Render("▸"), t.Icon, WhiteStyle.Render(t.Label)))
+				} else {
+					s.WriteString(fmt.Sprintf("    %s %s\n", t.Icon, DimStyle.Render(t.Label)))
+				}
+			}
+		}
+		s.WriteString("\n  " + DimStyle.Render("↑↓ select  Enter choose  Esc back") + "\n")
+
+	case addStepLabel:
+		s.WriteString("  " + TitleStyle.Render("Add Account") + "\n\n")
+		s.WriteString("  " + DimStyle.Render("Account name:") + "\n\n")
+		s.WriteString("  " + m.addLabel.View() + "\n")
+		if m.authMessage != "" {
+			s.WriteString("\n  " + ErrorStyle.Render(m.authMessage) + "\n")
+		}
+		s.WriteString("\n  " + DimStyle.Render("Enter continue  Esc back") + "\n")
+
+	case addStepKey:
+		a := m.accounts[m.accountIdx]
+		s.WriteString("  " + TitleStyle.Render("Add API Key") + " " + DimStyle.Render("for "+a.ID) + "\n\n")
+		nameLabel := DimStyle.Render("  Env Var ")
+		valLabel := DimStyle.Render("  Value  ")
+		if m.addKeyIdx == 0 {
+			nameLabel = TitleStyle.Render("  Env Var ")
+		} else {
+			valLabel = TitleStyle.Render("  Value  ")
+		}
+		s.WriteString(fmt.Sprintf("%s  %s\n", nameLabel, m.addKeyName.View()))
+		s.WriteString(fmt.Sprintf("%s  %s\n", valLabel, m.addKeyValue.View()))
+		if m.authMessage != "" {
+			s.WriteString("\n  " + ErrorStyle.Render(m.authMessage) + "\n")
+		}
+		s.WriteString("\n  " + DimStyle.Render("Tab next  Enter submit  Esc skip") + "\n")
+	}
+
 	return s.String()
 }
 

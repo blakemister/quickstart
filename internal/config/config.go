@@ -230,6 +230,7 @@ func copyDefaultAccounts() []Account {
 			InstallCmd: a.InstallCmd,
 			Icon:       a.Icon,
 			Enabled:    a.Enabled,
+			AuthUser:   a.AuthUser,
 		}
 	}
 	return accounts
