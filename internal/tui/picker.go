@@ -40,13 +40,14 @@ type PickerModel struct {
 	height   int
 
 	// Project stage
-	projects   []string
-	filtered   []string
-	filter     string
-	cursor     int // 0 is create-new-folder, 1..n are projects
-	viewOffset int
-	statusMsg  string
-	statusErr  bool
+	projects           []string
+	filtered           []string
+	filter             string
+	cursor             int // 0 is create-new-folder, 1..n are projects
+	viewOffset         int
+	statusMsg          string
+	statusErr          bool
+	preselectedProject string
 
 	// Create folder stage
 	createInput string
@@ -95,7 +96,21 @@ func NewPicker(cfg *config.Config) PickerModel {
 	}
 }
 
+// NewPickerWithProject creates a picker that skips straight to account selection
+// for the given project name.
+func NewPickerWithProject(cfg *config.Config, project string) PickerModel {
+	m := NewPicker(cfg)
+	m.preselectedProject = project
+	return m
+}
+
+// preselectedProjectMsg is sent when a project was pre-selected via --project flag.
+type preselectedProjectMsg struct{}
+
 func (m PickerModel) Init() tea.Cmd {
+	if m.preselectedProject != "" {
+		return func() tea.Msg { return preselectedProjectMsg{} }
+	}
 	return nil
 }
 
@@ -114,6 +129,9 @@ func (m PickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			return m.updateAccount(msg)
 		}
+	case preselectedProjectMsg:
+		m.selected = m.preselectedProject
+		return m.startAccountSelection()
 	case execDoneMsg:
 		m.err = msg.err
 		return m, tea.Quit

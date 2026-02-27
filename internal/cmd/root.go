@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var projectFlag string
+
 var rootCmd = &cobra.Command{
 	Use:   "qs",
 	Short: "Quickstart terminal launcher",
@@ -23,10 +25,12 @@ func Execute() error {
 }
 
 func init() {
+	rootCmd.Flags().StringVar(&projectFlag, "project", "", "Pre-select a project and skip to tool selection")
 	rootCmd.AddCommand(setupCmd)
 	rootCmd.AddCommand(accountsCmd)
 	rootCmd.AddCommand(monitorsCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(allCmd)
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {
@@ -62,7 +66,18 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 	cfg.ProjectsRoot = projectsRoot
 
-	picker := tui.NewPicker(cfg)
+	var picker tui.PickerModel
+	if projectFlag != "" {
+		// Validate project directory exists
+		projectDir := filepath.Join(cfg.ProjectsRoot, projectFlag)
+		info, statErr := os.Stat(projectDir)
+		if statErr != nil || !info.IsDir() {
+			return fmt.Errorf("project %q not found in %s", projectFlag, cfg.ProjectsRoot)
+		}
+		picker = tui.NewPickerWithProject(cfg, projectFlag)
+	} else {
+		picker = tui.NewPicker(cfg)
+	}
 	p := tea.NewProgram(picker, tea.WithAltScreen())
 	_, err = p.Run()
 	return err

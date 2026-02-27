@@ -218,7 +218,9 @@ func LaunchAllWithCurrent(configs []LaunchConfig) LaunchAllWithCurrentResult {
 	if len(configs) > 1 {
 		for i := 1; i < len(configs); i++ {
 			cfg := configs[i]
-			args := []string{"--title", cfg.Title, "-d", cfg.WorkingDir, "qs"}
+			args := []string{"--title", cfg.Title, "-d", cfg.WorkingDir}
+			args = append(args, cfg.Command)
+			args = append(args, cfg.Args...)
 			cmd := exec.Command("wt", args...)
 			applyEnv(cmd, cfg.Env)
 			if err := cmd.Start(); err != nil {
