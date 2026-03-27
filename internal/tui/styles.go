@@ -59,12 +59,22 @@ var logoLines = []struct {
 	color lipgloss.Color
 	text  string
 }{
-	{ColorBrCyan, "  ██████╗ ██╗  ██╗"},
-	{ColorBrCyan, " ██╔═══██╗██║ ██╔╝"},
-	{ColorCyan, " ██║   ██║█████╔╝ "},
-	{ColorCyan, " ██║▄▄ ██║██╔═██╗ "},
-	{ColorDimGray, " ╚██████╔╝██║  ██╗"},
-	{ColorDimGray, "  ╚══▀▀═╝ ╚═╝  ╚═╝"},
+	{ColorBrCyan, "  ██████╗  ███████╗      ▗▄█▄▖"},
+	{ColorBrCyan, " ██╔═══██╗ ██╔════╝     ▐█████▌"},
+	{ColorCyan, " ██║   ██║ ███████╗      ▝▀█▀▘"},
+	{ColorCyan, " ██║▄▄ ██║ ╚════██║       ▘ ▝"},
+	{ColorDimGray, " ╚██████╔╝ ███████║"},
+	{ColorDimGray, "  ╚══▀▀═╝  ╚══════╝"},
+}
+
+var mascotLines = []struct {
+	color lipgloss.Color
+	text  string
+}{
+	{ColorBrCyan, "  ▗▄█▄▖"},
+	{ColorCyan, " ▐█████▌"},
+	{ColorCyan, "  ▝▀█▀▘"},
+	{ColorDimGray, "   ▘ ▝"},
 }
 
 // RenderLogo returns the ASCII art logo with an optional subtitle
@@ -75,18 +85,24 @@ func RenderLogo(subtitle string) string {
 		style := lipgloss.NewStyle().Foreground(l.color)
 		s += " " + style.Render(l.text)
 		if i == 1 && subtitle != "" {
-			s += "   " + SubtitleStyle.Render(subtitle)
+			s += "  " + SubtitleStyle.Render(subtitle)
 		}
 		s += "\n"
 	}
 	return s
 }
 
+// RenderMascot returns the standalone mascot character
+func RenderMascot() string {
+	var s string
+	for _, l := range mascotLines {
+		style := lipgloss.NewStyle().Foreground(l.color)
+		s += " " + style.Render(l.text) + "\n"
+	}
+	return s
+}
+
 // RenderSep returns a dim horizontal rule
 func RenderSep() string {
-	sep := ""
-	for i := 0; i < 40; i++ {
-		sep += "─"
-	}
-	return fmt.Sprintf("\n %s\n", DimStyle.Render(sep))
+	return fmt.Sprintf("\n %s\n", DimStyle.Render("────────────────── ◆ ──────────────────"))
 }

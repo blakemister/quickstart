@@ -102,14 +102,10 @@ func runAll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no windows to launch")
 	}
 
-	// Launch: position current window as configs[0], spawn configs[1:] as new terminals
-	launcher.LaunchAllWithCurrent(configs)
+	// Launch all windows as new terminals and position them
+	launcher.LaunchAll(configs)
 
-	// Run picker in the current terminal with the project pre-selected
-	picker := tui.NewPickerWithProject(cfg, selectedProject)
-	pickerProgram := tea.NewProgram(picker, tea.WithAltScreen())
-	_, err = pickerProgram.Run()
-	return err
+	return nil
 }
 
 // layoutForCount maps window count to layout name (mirrors tui.layoutForCount)

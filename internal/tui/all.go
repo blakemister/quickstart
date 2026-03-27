@@ -73,7 +73,7 @@ func (m AllModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.monitors = msg.monitors
 		m.windowCounts = make([]int, len(m.monitors))
 		for i := range m.windowCounts {
-			m.windowCounts[i] = 1
+			m.windowCounts[i] = 2
 			if i < len(m.cfg.Monitors) {
 				count := m.cfg.Monitors[i].WindowCount()
 				if count >= 1 {
