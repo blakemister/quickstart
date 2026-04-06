@@ -142,7 +142,7 @@ func (m AllModel) viewMonitors() string {
 
 		res := fmt.Sprintf("%dx%d", mon.Width, mon.Height)
 		windows := m.windowCounts[i]
-		layout := layoutForCount(windows)
+		layout := LayoutForCount(windows)
 
 		if selected {
 			s.WriteString(fmt.Sprintf("  %s %s  %s  %s windows  %s\n",

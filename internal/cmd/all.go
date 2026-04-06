@@ -71,7 +71,7 @@ func runAll(cmd *cobra.Command, args []string) error {
 			count = 1
 		}
 
-		layout := layoutForCount(count)
+		layout := tui.LayoutForCount(count)
 		positions := launcher.CalculateLayout(&mon, count, layout)
 
 		for winIdx, pos := range positions {
@@ -95,16 +95,4 @@ func runAll(cmd *cobra.Command, args []string) error {
 	launcher.LaunchAll(configs)
 
 	return nil
-}
-
-// layoutForCount maps window count to layout name (mirrors tui.layoutForCount)
-func layoutForCount(count int) string {
-	switch {
-	case count <= 1:
-		return "full"
-	case count == 2:
-		return "vertical"
-	default:
-		return "grid"
-	}
 }

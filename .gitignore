@@ -30,3 +30,10 @@ Thumbs.db
 
 # Local config (users should create their own)
 config.local.yaml
+
+# User secrets (API keys)
+keys.yaml
+*.yaml.bak
+
+# Config files in home directory (not in repo, but just in case)
+config.yaml

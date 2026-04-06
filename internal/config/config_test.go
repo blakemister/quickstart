@@ -681,6 +681,29 @@ func TestEnsureDefaultsSyncsStaleArgs(t *testing.T) {
 	}
 }
 
+func TestIsFirstRun(t *testing.T) {
+	// Neither path exists
+	if !isFirstRunAt("/nonexistent/a", "/nonexistent/b") {
+		t.Error("expected true when neither config exists")
+	}
+
+	// Primary path exists
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "config.yaml")
+	os.WriteFile(primary, []byte("version: 4\n"), 0644)
+	if isFirstRunAt(primary, "/nonexistent/b") {
+		t.Error("expected false when primary config exists")
+	}
+
+	// Only legacy path exists
+	legacyDir := t.TempDir()
+	legacy := filepath.Join(legacyDir, "config.yaml")
+	os.WriteFile(legacy, []byte("version: 3\n"), 0644)
+	if isFirstRunAt("/nonexistent/a", legacy) {
+		t.Error("expected false when legacy config exists")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && containsSubstr(s, substr)
 }

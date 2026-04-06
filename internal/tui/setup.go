@@ -913,7 +913,7 @@ func (m SetupModel) viewMonitors() string {
 
 		res := fmt.Sprintf("%d×%d", mon.Width, mon.Height)
 		windows := m.windowCounts[i]
-		layout := layoutForCount(windows)
+		layout := LayoutForCount(windows)
 
 		var panel string
 		if selected {
@@ -1189,7 +1189,7 @@ func (m SetupModel) viewConfirm() string {
 
 	// Monitors
 	for i, count := range m.windowCounts {
-		layout := layoutForCount(count)
+		layout := LayoutForCount(count)
 		s.WriteString(fmt.Sprintf("  %s  %d windows (%s)\n",
 			DimStyle.Render(fmt.Sprintf("Monitor %d:", i+1)),
 			count, layout))
@@ -1240,7 +1240,7 @@ func (m SetupModel) buildConfig() *config.Config {
 			windows[j] = config.WindowConfig{Tool: "claude"}
 		}
 		monitors[i] = config.MonitorConfig{
-			Layout:  layoutForCount(count),
+			Layout:  LayoutForCount(count),
 			Windows: windows,
 		}
 	}
@@ -1255,7 +1255,7 @@ func (m SetupModel) buildConfig() *config.Config {
 	}
 }
 
-func layoutForCount(count int) string {
+func LayoutForCount(count int) string {
 	switch {
 	case count <= 1:
 		return "full"

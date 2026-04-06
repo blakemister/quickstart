@@ -213,6 +213,42 @@ func TestLaunchDirSetOnEnter(t *testing.T) {
 	}
 }
 
+func TestScanProjects(t *testing.T) {
+	root := t.TempDir()
+
+	// Create some project dirs
+	os.MkdirAll(filepath.Join(root, "alpha"), 0755)
+	os.MkdirAll(filepath.Join(root, "beta"), 0755)
+	os.MkdirAll(filepath.Join(root, "gamma"), 0755)
+	// Hidden dir should be excluded
+	os.MkdirAll(filepath.Join(root, ".hidden"), 0755)
+	// File should be excluded
+	os.WriteFile(filepath.Join(root, "file.txt"), []byte("hi"), 0644)
+
+	projects := scanProjects(root)
+
+	if len(projects) != 3 {
+		t.Fatalf("expected 3 projects, got %d: %v", len(projects), projects)
+	}
+	// Should be sorted
+	if projects[0] != "alpha" || projects[1] != "beta" || projects[2] != "gamma" {
+		t.Errorf("expected [alpha beta gamma], got %v", projects)
+	}
+
+	// Empty dir
+	emptyRoot := t.TempDir()
+	projects = scanProjects(emptyRoot)
+	if len(projects) != 0 {
+		t.Errorf("expected 0 projects for empty dir, got %d", len(projects))
+	}
+
+	// Non-existent dir
+	projects = scanProjects(filepath.Join(root, "nonexistent"))
+	if projects != nil {
+		t.Errorf("expected nil for non-existent dir, got %v", projects)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && containsSubstring(s, substr)
 }

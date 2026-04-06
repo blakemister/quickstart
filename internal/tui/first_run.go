@@ -127,7 +127,6 @@ func (m FirstRunModel) updatePathInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errText = ""
 		return m, cmd
 	}
-	return m, nil
 }
 
 func (m FirstRunModel) View() string {

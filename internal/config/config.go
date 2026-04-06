@@ -82,10 +82,15 @@ func DefaultProjectsRoot() string {
 
 // IsFirstRun returns true if no config file exists (neither new nor legacy)
 func IsFirstRun() bool {
-	if _, err := os.Stat(DefaultConfigPath()); err == nil {
+	return isFirstRunAt(DefaultConfigPath(), LegacyConfigPath())
+}
+
+// isFirstRunAt checks if either path exists (used by IsFirstRun, testable).
+func isFirstRunAt(path, legacy string) bool {
+	if _, err := os.Stat(path); err == nil {
 		return false
 	}
-	if _, err := os.Stat(LegacyConfigPath()); err == nil {
+	if _, err := os.Stat(legacy); err == nil {
 		return false
 	}
 	return true
