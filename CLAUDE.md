@@ -76,7 +76,7 @@ accounts:
   - id: claude
     label: Claude Code
     command: claude
-    args: ["--dangerously-skip-permissions"]
+    args: ["--dangerously-skip-permissions", "--effort", "max"]
     icon: "\U0001F7E0"
     enabled: true
 monitors:
@@ -116,13 +116,15 @@ These are the built-in tool definitions (defined in `internal/config/accounts.go
 
 | ID | Command | Args | InstallCmd | Enabled |
 |----|---------|------|------------|---------|
-| `claude` | `claude` | `--dangerously-skip-permissions` | `npm i -g @anthropic-ai/claude-code` | Yes |
+| `claude` | `claude` | `--dangerously-skip-permissions --effort max` | `npm i -g @anthropic-ai/claude-code` | Yes |
 | `codex` | `codex` | `--dangerously-bypass-approvals-and-sandbox` | `npm i -g @openai/codex` | Yes |
 | `gemini` | `gemini` | `--yolo` | `npm i -g @google/gemini-cli` | Yes |
 | `opencode` | `opencode` | (none) | `npm i -g opencode` | Yes |
 | `cursor` | `agent` | (none) | (none) | Yes |
 
-Claude-based accounts (`claude`, `ama-claude`) automatically set the environment variable `CLAUDE_CODE_EFFORT_LEVEL=max` when launching. This configures Claude Code to use its deepest reasoning mode (Opus 4.6). Users can override this per-account via `qs accounts` (keys editor) or by editing `~/.qs/keys.yaml`.
+Claude-based accounts (`claude`, `ama-claude`) launch with `--effort max` so Claude Code uses its deepest reasoning mode regardless of `~/.claude/settings.json effortLevel`. CLI args beat settings in Claude Code v2.1+. The launcher also injects `--effort max` at runtime for any account whose `Command` is `claude` (including user-cloned accounts) unless the user has already set an explicit `--effort` flag in `Args`. See `Account.ResolvedArgs` in `internal/config/accounts.go`.
+
+The legacy `CLAUDE_CODE_EFFORT_LEVEL=max` env var is also injected via `~/.qs/keys.yaml` defaults for backward compatibility with older Claude Code versions.
 
 Users can add custom accounts through `qs setup` or `qs accounts`.
 

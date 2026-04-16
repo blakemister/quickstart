@@ -78,11 +78,11 @@ After picking a project, choose which AI coding tool to launch. If only one tool
 
 | Tool | Command | Default |
 |------|---------|---------|
-| Claude Code | `claude --dangerously-skip-permissions` | Enabled |
+| Claude Code | `claude --dangerously-skip-permissions --effort max` | Enabled |
 | OpenAI Codex | `codex --dangerously-bypass-approvals-and-sandbox` | Enabled |
 | Gemini CLI | `gemini --yolo` | Enabled |
 | OpenCode (z.ai) | `opencode` | Enabled |
-| AMA Claude | `claude --dangerously-skip-permissions` | Enabled |
+| AMA Claude | `claude --dangerously-skip-permissions --effort max` | Enabled |
 | Cursor Agent | `agent` | Enabled |
 
 Add custom tools through the setup wizard or `qs accounts`.
@@ -131,7 +131,7 @@ accounts:
   - id: claude
     label: Claude Code
     command: claude
-    args: ["--dangerously-skip-permissions"]
+    args: ["--dangerously-skip-permissions", "--effort", "max"]
     enabled: true
   - id: codex
     label: OpenAI Codex
