@@ -192,3 +192,89 @@ func TestSuggestedEnvVars(t *testing.T) {
 		t.Errorf("expected claude to suggest ANTHROPIC_API_KEY, got %q", SuggestedEnvVars["claude"][0])
 	}
 }
+
+func TestDefaultAccounts_ClaudeHasMaxEffort(t *testing.T) {
+	for _, id := range []string{"claude", "ama-claude"} {
+		a := AccountByID(DefaultAccounts, id)
+		if a == nil {
+			t.Fatalf("expected DefaultAccounts to contain %q", id)
+		}
+		found := false
+		for i, arg := range a.Args {
+			if arg == "--effort" && i+1 < len(a.Args) && a.Args[i+1] == "max" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %q to have '--effort max' in Args, got %v", id, a.Args)
+		}
+	}
+}
+
+func TestResolvedArgs_AppendsEffortForClaudeCommand(t *testing.T) {
+	a := Account{Command: "claude", Args: []string{"--dangerously-skip-permissions"}}
+	got := a.ResolvedArgs()
+	want := []string{"--dangerously-skip-permissions", "--effort", "max"}
+	if !stringSliceEqual(got, want) {
+		t.Errorf("ResolvedArgs = %v, want %v", got, want)
+	}
+	// Original Args must be unchanged
+	if len(a.Args) != 1 {
+		t.Errorf("ResolvedArgs mutated receiver Args: %v", a.Args)
+	}
+}
+
+func TestResolvedArgs_PreservesUserEffortOverride(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"space-separated", []string{"--dangerously-skip-permissions", "--effort", "high"}},
+		{"equals-form", []string{"--effort=low", "--dangerously-skip-permissions"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := Account{Command: "claude", Args: tc.args}
+			got := a.ResolvedArgs()
+			if !stringSliceEqual(got, tc.args) {
+				t.Errorf("ResolvedArgs = %v, want unchanged %v", got, tc.args)
+			}
+		})
+	}
+}
+
+func TestResolvedArgs_IgnoresNonClaudeCommands(t *testing.T) {
+	cases := []Account{
+		{Command: "codex", Args: []string{"--dangerously-bypass-approvals-and-sandbox"}},
+		{Command: "gemini", Args: []string{"--yolo"}},
+		{Command: "agent", Args: []string{}},
+	}
+	for _, a := range cases {
+		got := a.ResolvedArgs()
+		if !stringSliceEqual(got, a.Args) {
+			t.Errorf("ResolvedArgs for %q = %v, want unchanged %v", a.Command, got, a.Args)
+		}
+	}
+}
+
+func TestResolvedArgs_ReturnsCopyNotReference(t *testing.T) {
+	a := Account{Command: "codex", Args: []string{"--yolo"}}
+	got := a.ResolvedArgs()
+	got[0] = "mutated"
+	if a.Args[0] == "mutated" {
+		t.Error("ResolvedArgs returned a slice that aliases receiver Args; caller mutation leaked back")
+	}
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

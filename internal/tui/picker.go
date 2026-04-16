@@ -332,7 +332,7 @@ func (m PickerModel) launchAccount(account config.Account) (tea.Model, tea.Cmd) 
 	_ = config.Save(m.cfg, "")
 
 	projectDir := m.launchDir
-	c := exec.Command(account.Command, account.Args...)
+	c := exec.Command(account.Command, account.ResolvedArgs()...)
 	c.Dir = projectDir
 
 	// Inject API keys as env vars
