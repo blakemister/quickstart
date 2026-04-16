@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/bcmister/qs/internal/launcher"
 	"github.com/bcmister/qs/internal/monitor"
 	"github.com/bcmister/qs/internal/tui"
 	"github.com/charmbracelet/lipgloss"
@@ -52,6 +53,8 @@ func runMonitors(cmd *cobra.Command, args []string) error {
 		fmt.Println("   " + box.Render(content))
 	}
 
-	fmt.Println()
+	fmt.Printf("  %s %dpx\n\n",
+		tui.DimStyle.Render("Invisible border:"),
+		launcher.GetInvisibleBorderWidth())
 	return nil
 }

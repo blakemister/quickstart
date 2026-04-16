@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bcmister/qs/internal/config"
@@ -186,7 +187,7 @@ func TestBreadcrumbShownWhenBrowsing(t *testing.T) {
 	pm := result.(PickerModel)
 
 	view := pm.View()
-	if !contains(view, "alpha") {
+	if !strings.Contains(view, "alpha") {
 		t.Fatalf("expected breadcrumb containing 'alpha' in view")
 	}
 }
@@ -249,15 +250,3 @@ func TestScanProjects(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && containsSubstring(s, substr)
-}
-
-func containsSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
