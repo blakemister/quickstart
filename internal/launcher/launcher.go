@@ -148,7 +148,14 @@ func LaunchTerminal(cfg LaunchConfig) error {
 
 	cmd := exec.Command("wt", args...)
 	applyEnv(cmd, cfg.Env)
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Release the process handle so the OS reaps it independently of qs.
+	// Without this, Go's runtime retains a handle on wt.exe (and indirectly its
+	// qs.exe child), which can leave grandchild processes orphaned if their
+	// console pipe is interrupted before they finish.
+	return cmd.Process.Release()
 }
 
 // LaunchAll launches all terminals in parallel and positions them.
@@ -167,6 +174,10 @@ func LaunchAll(configs []LaunchConfig) []LaunchResult {
 		applyEnv(cmd, cfg.Env)
 		if err := cmd.Start(); err != nil {
 			results[i].Err = fmt.Errorf("failed to launch: %w", err)
+			continue
+		}
+		if err := cmd.Process.Release(); err != nil {
+			results[i].Err = fmt.Errorf("failed to release process handle: %w", err)
 		}
 	}
 
@@ -225,6 +236,10 @@ func LaunchAllWithCurrent(configs []LaunchConfig) LaunchAllWithCurrentResult {
 			applyEnv(cmd, cfg.Env)
 			if err := cmd.Start(); err != nil {
 				results[i].Err = fmt.Errorf("failed to launch: %w", err)
+				continue
+			}
+			if err := cmd.Process.Release(); err != nil {
+				results[i].Err = fmt.Errorf("failed to release process handle: %w", err)
 			}
 		}
 
@@ -301,7 +316,10 @@ func findWindowByTitle(title string) (uintptr, error) {
 			procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&windowTitle[0])), 256)
 
 			text := syscall.UTF16ToString(windowTitle[:])
-			if text == title || containsSubstring(text, title) {
+			// Exact match only — fuzzy matching previously matched stale
+			// windows from prior `qs all` runs, leaving the new window
+			// unpositioned and silently moving the old one.
+			if text == title {
 				foundHwnd = hwnd
 				return 0
 			}
@@ -318,21 +336,6 @@ func findWindowByTitle(title string) (uintptr, error) {
 	}
 
 	return 0, fmt.Errorf("window with title '%s' not found", title)
-}
-
-func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-			findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // applyEnv sets extra environment variables on a command.

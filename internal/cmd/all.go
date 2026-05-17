@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/bcmister/qs/internal/config"
@@ -92,7 +93,18 @@ func runAll(cmd *cobra.Command, args []string) error {
 	}
 
 	// Launch all windows as new terminals with their own pickers
-	launcher.LaunchAll(configs)
+	results := launcher.LaunchAll(configs)
+
+	var failures []string
+	for _, r := range results {
+		if r.Err != nil {
+			failures = append(failures, fmt.Sprintf("  %s: %v", r.Title, r.Err))
+		}
+	}
+	if len(failures) > 0 {
+		fmt.Fprintf(os.Stderr, "Some windows failed to launch or position:\n%s\n",
+			strings.Join(failures, "\n"))
+	}
 
 	return nil
 }
