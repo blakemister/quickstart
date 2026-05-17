@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bcmister/qs/internal/config"
@@ -81,8 +82,8 @@ func TestBrowseRightNavigatesIntoSubdir(t *testing.T) {
 	if m.cursor != 1 {
 		t.Fatalf("expected cursor=1, got %d", m.cursor)
 	}
-	if m.filtered[0] != "alpha" {
-		t.Fatalf("expected first project=alpha, got %s", m.filtered[0])
+	if m.filtered[0].name != "alpha" {
+		t.Fatalf("expected first project=alpha, got %s", m.filtered[0].name)
 	}
 
 	// Press Right to navigate into alpha
@@ -157,8 +158,8 @@ func TestBrowseIntoEmptyDir(t *testing.T) {
 
 	// Move to beta (index 1 in filtered = "beta" is second, cursor=2)
 	m.cursor = 2
-	if m.filtered[1] != "beta" {
-		t.Fatalf("expected second project=beta, got %s", m.filtered[1])
+	if m.filtered[1].name != "beta" {
+		t.Fatalf("expected second project=beta, got %s", m.filtered[1].name)
 	}
 
 	result := sendKey(m, tea.KeyRight)
@@ -186,7 +187,7 @@ func TestBreadcrumbShownWhenBrowsing(t *testing.T) {
 	pm := result.(PickerModel)
 
 	view := pm.View()
-	if !contains(view, "alpha") {
+	if !strings.Contains(view, "alpha") {
 		t.Fatalf("expected breadcrumb containing 'alpha' in view")
 	}
 }
@@ -222,7 +223,7 @@ func TestScanProjects(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "gamma"), 0755)
 	// Hidden dir should be excluded
 	os.MkdirAll(filepath.Join(root, ".hidden"), 0755)
-	// File should be excluded
+	// File should be excluded from the dirs-only wrapper
 	os.WriteFile(filepath.Join(root, "file.txt"), []byte("hi"), 0644)
 
 	projects := scanProjects(root)
@@ -249,15 +250,131 @@ func TestScanProjects(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && containsSubstring(s, substr)
-}
+func TestScanEntriesIncludesFilesAndDirs(t *testing.T) {
+	root := t.TempDir()
 
-func containsSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
+	os.MkdirAll(filepath.Join(root, "alpha"), 0755)
+	os.MkdirAll(filepath.Join(root, "beta"), 0755)
+	os.MkdirAll(filepath.Join(root, ".hidden"), 0755)
+	os.WriteFile(filepath.Join(root, "README.md"), []byte("# hi"), 0644)
+	os.WriteFile(filepath.Join(root, "notes.txt"), []byte("ok"), 0644)
+	os.WriteFile(filepath.Join(root, ".env"), []byte("x"), 0644)
+
+	entries := scanEntries(root)
+
+	if len(entries) != 4 {
+		t.Fatalf("expected 4 entries (2 dirs + 2 files), got %d: %+v", len(entries), entries)
+	}
+	// Dirs first, sorted, then files sorted.
+	want := []entry{
+		{name: "alpha", isDir: true},
+		{name: "beta", isDir: true},
+		{name: "README.md", isDir: false},
+		{name: "notes.txt", isDir: false},
+	}
+	for i, w := range want {
+		if entries[i] != w {
+			t.Errorf("entries[%d] = %+v, want %+v", i, entries[i], w)
 		}
 	}
-	return false
 }
+
+func TestScanEntriesEmpty(t *testing.T) {
+	root := t.TempDir()
+	entries := scanEntries(root)
+	if len(entries) != 0 {
+		t.Fatalf("expected 0 entries for empty dir, got %d", len(entries))
+	}
+}
+
+func TestScanEntriesNonExistent(t *testing.T) {
+	entries := scanEntries(filepath.Join(t.TempDir(), "nope"))
+	if entries != nil {
+		t.Fatalf("expected nil for non-existent dir, got %+v", entries)
+	}
+}
+
+func TestApplyFilterMatchesEntries(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "alpha"), 0755)
+	os.MkdirAll(filepath.Join(root, "beta"), 0755)
+	os.WriteFile(filepath.Join(root, "alphabet.md"), []byte("ok"), 0644)
+	os.WriteFile(filepath.Join(root, "ignore.txt"), []byte("ok"), 0644)
+
+	cfg := &config.Config{
+		ProjectsRoot: root,
+		Accounts: []config.Account{
+			{ID: "test", Label: "Test", Command: "echo", Enabled: true},
+		},
+	}
+	m := NewPicker(cfg)
+
+	m.filter = "alpha"
+	m.applyFilter()
+
+	if len(m.filtered) != 2 {
+		t.Fatalf("expected 2 matches for 'alpha', got %d: %+v", len(m.filtered), m.filtered)
+	}
+	if m.filtered[0].name != "alpha" || !m.filtered[0].isDir {
+		t.Errorf("first match should be the alpha directory, got %+v", m.filtered[0])
+	}
+	if m.filtered[1].name != "alphabet.md" || m.filtered[1].isDir {
+		t.Errorf("second match should be alphabet.md (file), got %+v", m.filtered[1])
+	}
+}
+
+func TestEnterOnFileOpensViewer(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "README.md"), []byte("# Hello"), 0644)
+
+	cfg := &config.Config{
+		ProjectsRoot: root,
+		Accounts: []config.Account{
+			{ID: "test", Label: "Test", Command: "echo", Enabled: true},
+		},
+	}
+	m := NewPicker(cfg)
+	// cursor=1 (the only entry, which is the README file)
+	if m.filtered[0].isDir {
+		t.Fatalf("expected README.md to be a file entry, got %+v", m.filtered[0])
+	}
+
+	result := sendKey(m, tea.KeyEnter)
+	pm := result.(PickerModel)
+	if pm.stage != stageView {
+		t.Fatalf("expected stage=stageView after Enter on file, got %d", pm.stage)
+	}
+	if pm.viewer == nil {
+		t.Fatal("expected viewer to be set")
+	}
+	if pm.viewer.kind != viewerKindMarkdown {
+		t.Fatalf("expected markdown viewer, got %v", pm.viewer.kind)
+	}
+}
+
+func TestEscFromViewerReturnsToProjectStage(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "doc.md"), []byte("# Doc"), 0644)
+	cfg := &config.Config{
+		ProjectsRoot: root,
+		Accounts: []config.Account{
+			{ID: "test", Label: "Test", Command: "echo", Enabled: true},
+		},
+	}
+	m := NewPicker(cfg)
+	result := sendKey(m, tea.KeyEnter)
+	pm := result.(PickerModel)
+	if pm.stage != stageView {
+		t.Fatalf("expected viewer stage, got %d", pm.stage)
+	}
+
+	result = sendKey(pm, tea.KeyEsc)
+	pm = result.(PickerModel)
+	if pm.stage != stageProject {
+		t.Fatalf("expected stageProject after Esc, got %d", pm.stage)
+	}
+	if pm.viewer != nil {
+		t.Fatal("expected viewer to be cleared")
+	}
+}
+

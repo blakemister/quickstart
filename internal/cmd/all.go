@@ -69,7 +69,7 @@ func runAll(cmd *cobra.Command, args []string) error {
 			count = windowCounts[monIdx]
 		}
 		if count < 1 {
-			count = 1
+			continue
 		}
 
 		layout := tui.LayoutForCount(count)
