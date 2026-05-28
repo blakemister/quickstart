@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/bcmister/qs/internal/config"
@@ -221,20 +223,206 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey routes key input. Wave C1 supports only quit; Wave C2 adds focus
-// cycling, pane navigation, and the session lifecycle/attach keys.
+// handleKey routes key input: focus cycling, pane navigation, the session
+// lifecycle keys (s/x/k), Enter-attach, refresh, context cycling, and quit.
 func (m DashboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
-	default:
-		if msg.String() == "q" {
-			m.quitting = true
-			return m, tea.Quit
+	case tea.KeyTab:
+		m.cycleFocus(1)
+		return m, nil
+	case tea.KeyShiftTab:
+		m.cycleFocus(-1)
+		return m, nil
+	case tea.KeyUp:
+		return m.navUp()
+	case tea.KeyDown:
+		return m.navDown()
+	case tea.KeyEnter:
+		return m.attachSelected()
+	}
+
+	switch msg.String() {
+	case "q":
+		m.quitting = true
+		return m, tea.Quit
+	case "s":
+		return m, m.startSelected()
+	case "x":
+		return m, m.stopSelected()
+	case "k":
+		return m, m.killSelected()
+	case "r":
+		return m.refresh()
+	case "c":
+		m.cycleContext()
+		return m, nil
+	}
+
+	// When the context pane is focused, delegate other keys (page up/down,
+	// home/end, etc.) to the embedded viewer for scrolling.
+	if m.focus == contextPane && m.viewer != nil {
+		cmd := m.viewer.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+// cycleFocus moves focus forward (dir=1) or backward (dir=-1) across the three
+// panes, wrapping around.
+func (m *DashboardModel) cycleFocus(dir int) {
+	const paneCount = 3
+	m.focus = dashFocus((int(m.focus) + dir + paneCount) % paneCount)
+}
+
+// navUp moves the cursor up in the focused pane (or scrolls the viewer up).
+func (m DashboardModel) navUp() (tea.Model, tea.Cmd) {
+	switch m.focus {
+	case projectsPane:
+		if m.projectCur > 0 {
+			m.projectCur--
+			return m, m.selectProjectCmd()
+		}
+	case sessionsPane:
+		if m.sessionCur > 0 {
+			m.sessionCur--
+		}
+	case contextPane:
+		if m.viewer != nil {
+			return m, m.viewer.Update(tea.KeyMsg{Type: tea.KeyUp})
 		}
 	}
 	return m, nil
+}
+
+// navDown moves the cursor down in the focused pane (or scrolls the viewer).
+func (m DashboardModel) navDown() (tea.Model, tea.Cmd) {
+	switch m.focus {
+	case projectsPane:
+		if m.projectCur < len(m.projects)-1 {
+			m.projectCur++
+			return m, m.selectProjectCmd()
+		}
+	case sessionsPane:
+		if m.sessionCur < len(m.sessions)-1 {
+			m.sessionCur++
+		}
+	case contextPane:
+		if m.viewer != nil {
+			return m, m.viewer.Update(tea.KeyMsg{Type: tea.KeyDown})
+		}
+	}
+	return m, nil
+}
+
+// startSelected starts a session for the selected project using the configured
+// default account.
+func (m *DashboardModel) startSelected() tea.Cmd {
+	if m.engine == nil {
+		return nil
+	}
+	projectID := m.selectedProjectID()
+	if projectID == "" {
+		return nil
+	}
+	accountID := m.cfg.DefaultAccount
+	if accountID == "" {
+		accountID = m.cfg.LastAccount
+	}
+	engine := m.engine
+	spec := SessionSpec{ProjectID: projectID, AccountID: accountID}
+	return func() tea.Msg {
+		s, err := engine.Start(spec)
+		if err != nil {
+			return sessionEventMsg{event: SessionEvent{Kind: EventError, Err: err}}
+		}
+		return sessionEventMsg{event: SessionEvent{Kind: EventStarted, Session: s}}
+	}
+}
+
+// stopSelected stops the focused session.
+func (m *DashboardModel) stopSelected() tea.Cmd {
+	return m.lifecycleCmd(func(id string) error { return m.engine.Stop(id) }, EventStateChange)
+}
+
+// killSelected kills the focused session.
+func (m *DashboardModel) killSelected() tea.Cmd {
+	return m.lifecycleCmd(func(id string) error { return m.engine.Kill(id) }, EventExited)
+}
+
+// lifecycleCmd runs a stop/kill action on the focused session off-thread and
+// reports the result as a sessionEventMsg so the list reconciles.
+func (m *DashboardModel) lifecycleCmd(action func(string) error, kind SessionEventKind) tea.Cmd {
+	if m.engine == nil {
+		return nil
+	}
+	id := m.focusedSessionID()
+	if id == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		if err := action(id); err != nil {
+			return sessionEventMsg{event: SessionEvent{Kind: EventError, Session: Session{ID: id}, Err: err}}
+		}
+		return sessionEventMsg{event: SessionEvent{Kind: kind, Session: Session{ID: id}}}
+	}
+}
+
+// attachSelected hands the terminal over to the focused session via psmux
+// attach. The dashboard SUSPENDS (tea.ExecProcess) and RESUMES afterward — it
+// does NOT quit.
+func (m DashboardModel) attachSelected() (tea.Model, tea.Cmd) {
+	if m.engine == nil {
+		return m, nil
+	}
+	id := m.focusedSessionID()
+	if id == "" {
+		return m, nil
+	}
+	cmd, err := m.engine.Attach(id)
+	if err != nil {
+		m.statusMsg = err.Error()
+		m.statusErr = true
+		return m, nil
+	}
+	return m, tea.ExecProcess(cmd, func(execErr error) tea.Msg {
+		return attachDoneMsg{sessionID: id, err: execErr}
+	})
+}
+
+// refresh re-scans projects and re-reads the session list from the engine.
+func (m DashboardModel) refresh() (tea.Model, tea.Cmd) {
+	m.projects = scanEntries(m.cfg.ProjectsRoot)
+	if m.projectCur >= len(m.projects) {
+		m.projectCur = len(m.projects) - 1
+	}
+	if m.projectCur < 0 {
+		m.projectCur = 0
+	}
+	if m.engine != nil {
+		m.sessions = m.engine.List()
+	}
+	m.clampSessionCursor()
+	return m, m.selectProjectCmd()
+}
+
+// cycleContext advances to the next candidate context document and loads it.
+func (m *DashboardModel) cycleContext() {
+	if len(m.contextDocs) < 2 {
+		return
+	}
+	m.contextIdx = (m.contextIdx + 1) % len(m.contextDocs)
+	path := m.contextDocs[m.contextIdx]
+	data, err := os.ReadFile(path)
+	if err != nil {
+		m.statusMsg = err.Error()
+		m.statusErr = true
+		return
+	}
+	m.viewer = newViewerModel(filepath.Base(path), string(data))
+	m.resizeViewer()
 }
 
 // applySessionEvent reconciles the session list with one engine event.
