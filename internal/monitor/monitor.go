@@ -60,10 +60,10 @@ func Detect() ([]Monitor, error) {
 
 			m := Monitor{
 				Name:    deviceName,
-				X:       int(info.RcMonitor.Left),
-				Y:       int(info.RcMonitor.Top),
-				Width:   int(info.RcMonitor.Right - info.RcMonitor.Left),
-				Height:  int(info.RcMonitor.Bottom - info.RcMonitor.Top),
+				X:       int(info.RcWork.Left),
+				Y:       int(info.RcWork.Top),
+				Width:   int(info.RcWork.Right - info.RcWork.Left),
+				Height:  int(info.RcWork.Bottom - info.RcWork.Top),
 				Primary: info.DwFlags&MONITORINFOF_PRIMARY != 0,
 			}
 

@@ -66,12 +66,8 @@ func SaveKeys(keys AccountKeys) error {
 func DefaultAccountKeys() AccountKeys {
 	homeDir, _ := os.UserHomeDir()
 	return AccountKeys{
-		"claude": {
-			"CLAUDE_CODE_EFFORT_LEVEL": "max",
-		},
 		"ama-claude": {
-			"CLAUDE_CONFIG_DIR":        filepath.Join(homeDir, ".claude-ama"),
-			"CLAUDE_CODE_EFFORT_LEVEL": "max",
+			"CLAUDE_CONFIG_DIR": filepath.Join(homeDir, ".claude-ama"),
 		},
 	}
 }
@@ -98,6 +94,25 @@ func KeysForAccount(keys AccountKeys, accountID string) map[string]string {
 		return nil
 	}
 	return keys[accountID]
+}
+
+// ProfileKeyPrefix namespaces a profile's secrets within the keys map. Profile
+// secrets are stored under the top-level key "profile:<id>" so they never
+// collide with account IDs.
+const ProfileKeyPrefix = "profile:"
+
+// ProfileKeyID returns the keys-map key for a profile's secret namespace.
+func ProfileKeyID(profileID string) string {
+	return ProfileKeyPrefix + profileID
+}
+
+// KeysForProfile returns the env var map for a specific profile, read from the
+// top-level "profile:<id>" entry. Returns nil if the profile has no keys.
+func KeysForProfile(keys AccountKeys, profileID string) map[string]string {
+	if keys == nil {
+		return nil
+	}
+	return keys[ProfileKeyID(profileID)]
 }
 
 // UserAPIKeys returns only user-provided API keys for an account,

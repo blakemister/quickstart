@@ -18,16 +18,70 @@ var (
 	procSetWindowPos   = user32.NewProc("SetWindowPos")
 	procEnumWindows    = user32.NewProc("EnumWindows")
 	procGetWindowTextW = user32.NewProc("GetWindowTextW")
+	procGetWindowRect  = user32.NewProc("GetWindowRect")
+	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
 
 	kernel32             = syscall.NewLazyDLL("kernel32.dll")
 	procGetConsoleWindow = kernel32.NewProc("GetConsoleWindow")
+
+	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll")
+	procDwmGetWindowAttribute = dwmapi.NewProc("DwmGetWindowAttribute")
 )
 
 const (
 	SWP_NOZORDER   = 0x0004
 	SWP_SHOWWINDOW = 0x0040
 	HWND_TOP       = 0
+
+	SM_CXSIZEFRAME             = 32
+	SM_CXPADDEDBORDER          = 92
+	DWMWA_EXTENDED_FRAME_BOUNDS = 9
 )
+
+// winRect matches the Win32 RECT structure (used for border measurement).
+type winRect struct {
+	Left, Top, Right, Bottom int32
+}
+
+var (
+	borderOnce   sync.Once
+	cachedBorder int
+)
+
+// GetInvisibleBorderWidth returns the per-side invisible border width of
+// Windows 10/11 windows. Measured via DWM on the current console window
+// (comparing GetWindowRect with DWMWA_EXTENDED_FRAME_BOUNDS), with a
+// GetSystemMetrics fallback.
+func GetInvisibleBorderWidth() int {
+	borderOnce.Do(func() {
+		// Try DWM measurement on current console window
+		hwnd := GetCurrentConsoleWindow()
+		if hwnd != 0 {
+			var wr, dwmBounds winRect
+			ret, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&wr)))
+			if ret != 0 {
+				hr, _, _ := procDwmGetWindowAttribute.Call(
+					hwnd,
+					DWMWA_EXTENDED_FRAME_BOUNDS,
+					uintptr(unsafe.Pointer(&dwmBounds)),
+					uintptr(unsafe.Sizeof(dwmBounds)),
+				)
+				if hr == 0 { // S_OK
+					border := int(dwmBounds.Left - wr.Left)
+					if border > 0 {
+						cachedBorder = border
+						return
+					}
+				}
+			}
+		}
+		// Fallback: GetSystemMetrics
+		frame, _, _ := procGetSystemMetrics.Call(SM_CXSIZEFRAME)
+		padded, _, _ := procGetSystemMetrics.Call(SM_CXPADDEDBORDER)
+		cachedBorder = int(frame + padded)
+	})
+	return cachedBorder
+}
 
 // Position represents a window position and size
 type Position struct {
@@ -90,17 +144,18 @@ func calculateGrid(mon *monitor.Monitor, count int) []Position {
 		}
 	}
 
-	cellWidth := mon.Width / cols
-	cellHeight := mon.Height / rows
-
 	for i := 0; i < count; i++ {
 		row := i / cols
 		col := i % cols
+		x := mon.X + col*mon.Width/cols
+		nextX := mon.X + (col+1)*mon.Width/cols
+		y := mon.Y + row*mon.Height/rows
+		nextY := mon.Y + (row+1)*mon.Height/rows
 		positions[i] = Position{
-			X:      mon.X + (col * cellWidth),
-			Y:      mon.Y + (row * cellHeight),
-			Width:  cellWidth,
-			Height: cellHeight,
+			X:      x,
+			Y:      y,
+			Width:  nextX - x,
+			Height: nextY - y,
 		}
 	}
 
@@ -109,13 +164,14 @@ func calculateGrid(mon *monitor.Monitor, count int) []Position {
 
 func calculateVertical(mon *monitor.Monitor, count int) []Position {
 	positions := make([]Position, count)
-	cellWidth := mon.Width / count
 
 	for i := 0; i < count; i++ {
+		x := mon.X + i*mon.Width/count
+		nextX := mon.X + (i+1)*mon.Width/count
 		positions[i] = Position{
-			X:      mon.X + (i * cellWidth),
+			X:      x,
 			Y:      mon.Y,
-			Width:  cellWidth,
+			Width:  nextX - x,
 			Height: mon.Height,
 		}
 	}
@@ -125,14 +181,15 @@ func calculateVertical(mon *monitor.Monitor, count int) []Position {
 
 func calculateHorizontal(mon *monitor.Monitor, count int) []Position {
 	positions := make([]Position, count)
-	cellHeight := mon.Height / count
 
 	for i := 0; i < count; i++ {
+		y := mon.Y + i*mon.Height/count
+		nextY := mon.Y + (i+1)*mon.Height/count
 		positions[i] = Position{
 			X:      mon.X,
-			Y:      mon.Y + (i * cellHeight),
+			Y:      y,
 			Width:  mon.Width,
-			Height: cellHeight,
+			Height: nextY - y,
 		}
 	}
 
@@ -148,7 +205,14 @@ func LaunchTerminal(cfg LaunchConfig) error {
 
 	cmd := exec.Command("wt", args...)
 	applyEnv(cmd, cfg.Env)
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Release the process handle so the OS reaps it independently of qs.
+	// Without this, Go's runtime retains a handle on wt.exe (and indirectly its
+	// qs.exe child), which can leave grandchild processes orphaned if their
+	// console pipe is interrupted before they finish.
+	return cmd.Process.Release()
 }
 
 // LaunchAll launches all terminals in parallel and positions them.
@@ -167,6 +231,10 @@ func LaunchAll(configs []LaunchConfig) []LaunchResult {
 		applyEnv(cmd, cfg.Env)
 		if err := cmd.Start(); err != nil {
 			results[i].Err = fmt.Errorf("failed to launch: %w", err)
+			continue
+		}
+		if err := cmd.Process.Release(); err != nil {
+			results[i].Err = fmt.Errorf("failed to release process handle: %w", err)
 		}
 	}
 
@@ -225,6 +293,10 @@ func LaunchAllWithCurrent(configs []LaunchConfig) LaunchAllWithCurrentResult {
 			applyEnv(cmd, cfg.Env)
 			if err := cmd.Start(); err != nil {
 				results[i].Err = fmt.Errorf("failed to launch: %w", err)
+				continue
+			}
+			if err := cmd.Process.Release(); err != nil {
+				results[i].Err = fmt.Errorf("failed to release process handle: %w", err)
 			}
 		}
 
@@ -301,7 +373,10 @@ func findWindowByTitle(title string) (uintptr, error) {
 			procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&windowTitle[0])), 256)
 
 			text := syscall.UTF16ToString(windowTitle[:])
-			if text == title || containsSubstring(text, title) {
+			// Exact match only — fuzzy matching previously matched stale
+			// windows from prior `qs all` runs, leaving the new window
+			// unpositioned and silently moving the old one.
+			if text == title {
 				foundHwnd = hwnd
 				return 0
 			}
@@ -320,21 +395,6 @@ func findWindowByTitle(title string) (uintptr, error) {
 	return 0, fmt.Errorf("window with title '%s' not found", title)
 }
 
-func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-			findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 // applyEnv sets extra environment variables on a command.
 // If env is nil or empty, the command inherits the parent environment as-is.
 func applyEnv(cmd *exec.Cmd, env map[string]string) {
@@ -348,6 +408,13 @@ func applyEnv(cmd *exec.Cmd, env map[string]string) {
 }
 
 func setWindowPosition(hwnd uintptr, x, y, width, height int) error {
+	// Compensate for Windows 10/11 invisible borders so visible window
+	// content tiles seamlessly edge-to-edge.
+	bw := GetInvisibleBorderWidth()
+	x -= bw
+	width += 2 * bw
+	height += bw // bottom border only; top has none for WT title bar
+
 	ret, _, err := procSetWindowPos.Call(
 		hwnd,
 		HWND_TOP,

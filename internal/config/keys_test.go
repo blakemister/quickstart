@@ -189,42 +189,39 @@ func TestKeysForAccountNilMap(t *testing.T) {
 	}
 }
 
-func TestDefaultAccountKeysHasEffortLevel(t *testing.T) {
+func TestDefaultAccountKeysHasNoEffortLevel(t *testing.T) {
 	defaults := DefaultAccountKeys()
 
-	// Verify claude has CLAUDE_CODE_EFFORT_LEVEL
-	claudeKeys, ok := defaults["claude"]
-	if !ok {
-		t.Fatal("expected 'claude' entry in DefaultAccountKeys")
-	}
-	if claudeKeys["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
-		t.Errorf("expected claude CLAUDE_CODE_EFFORT_LEVEL 'max', got %q", claudeKeys["CLAUDE_CODE_EFFORT_LEVEL"])
+	// claude must not inject any forced env vars (Claude Code owns effort now)
+	if _, ok := defaults["claude"]; ok {
+		t.Errorf("expected no 'claude' defaults, got %v", defaults["claude"])
 	}
 
-	// Verify ama-claude has CLAUDE_CODE_EFFORT_LEVEL
+	// ama-claude keeps CLAUDE_CONFIG_DIR but no longer forces effort
 	amaKeys, ok := defaults["ama-claude"]
 	if !ok {
 		t.Fatal("expected 'ama-claude' entry in DefaultAccountKeys")
 	}
-	if amaKeys["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
-		t.Errorf("expected ama-claude CLAUDE_CODE_EFFORT_LEVEL 'max', got %q", amaKeys["CLAUDE_CODE_EFFORT_LEVEL"])
+	if _, hasEffort := amaKeys["CLAUDE_CODE_EFFORT_LEVEL"]; hasEffort {
+		t.Error("expected ama-claude to NOT have CLAUDE_CODE_EFFORT_LEVEL")
 	}
-
-	// Verify ama-claude still has CLAUDE_CONFIG_DIR
 	if amaKeys["CLAUDE_CONFIG_DIR"] == "" {
 		t.Error("expected ama-claude to still have CLAUDE_CONFIG_DIR")
 	}
 }
 
-func TestEnsureDefaultKeysAddsEffortLevel(t *testing.T) {
+func TestEnsureDefaultKeysAddsNoEffortLevel(t *testing.T) {
 	keys := make(AccountKeys)
 	EnsureDefaultKeys(keys)
 
-	if keys["claude"]["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
-		t.Errorf("expected claude CLAUDE_CODE_EFFORT_LEVEL 'max', got %q", keys["claude"]["CLAUDE_CODE_EFFORT_LEVEL"])
+	if _, hasEffort := keys["claude"]["CLAUDE_CODE_EFFORT_LEVEL"]; hasEffort {
+		t.Error("expected claude to NOT get CLAUDE_CODE_EFFORT_LEVEL")
 	}
-	if keys["ama-claude"]["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
-		t.Errorf("expected ama-claude CLAUDE_CODE_EFFORT_LEVEL 'max', got %q", keys["ama-claude"]["CLAUDE_CODE_EFFORT_LEVEL"])
+	if _, hasEffort := keys["ama-claude"]["CLAUDE_CODE_EFFORT_LEVEL"]; hasEffort {
+		t.Error("expected ama-claude to NOT get CLAUDE_CODE_EFFORT_LEVEL")
+	}
+	if keys["ama-claude"]["CLAUDE_CONFIG_DIR"] == "" {
+		t.Error("expected ama-claude to get CLAUDE_CONFIG_DIR")
 	}
 }
 

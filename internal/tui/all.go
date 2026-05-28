@@ -41,6 +41,14 @@ func (m AllModel) Confirmed() bool { return m.confirmed }
 // WindowCounts returns the per-monitor window counts.
 func (m AllModel) WindowCounts() []int { return m.windowCounts }
 
+func (m AllModel) totalWindows() int {
+	total := 0
+	for _, c := range m.windowCounts {
+		total += c
+	}
+	return total
+}
+
 func (m AllModel) Init() tea.Cmd {
 	return detectMonitors
 }
@@ -82,6 +90,9 @@ func (m AllModel) updateMonitors(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.monitors) == 0 {
 			return m, nil
 		}
+		if m.totalWindows() == 0 {
+			return m, nil
+		}
 		m.confirmed = true
 		return m, tea.Quit
 	case msg.String() == "left" || msg.String() == "h":
@@ -97,7 +108,7 @@ func (m AllModel) updateMonitors(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.windowCounts[m.monitorIdx]++
 		}
 	case msg.Type == tea.KeyDown:
-		if len(m.monitors) > 0 && m.windowCounts[m.monitorIdx] > 1 {
+		if len(m.monitors) > 0 && m.windowCounts[m.monitorIdx] > 0 {
 			m.windowCounts[m.monitorIdx]--
 		}
 	}
@@ -142,29 +153,44 @@ func (m AllModel) viewMonitors() string {
 
 		res := fmt.Sprintf("%dx%d", mon.Width, mon.Height)
 		windows := m.windowCounts[i]
-		layout := LayoutForCount(windows)
 
-		if selected {
-			s.WriteString(fmt.Sprintf("  %s %s  %s  %s windows  %s\n",
-				TitleStyle.Render(">"),
-				SubtitleStyle.Render(label),
-				DimStyle.Render(res),
-				TitleStyle.Render(fmt.Sprintf("%d", windows)),
-				DimStyle.Render("("+layout+")")))
+		if windows == 0 {
+			if selected {
+				s.WriteString(fmt.Sprintf("  %s %s  %s  %s\n",
+					TitleStyle.Render(">"),
+					SubtitleStyle.Render(label),
+					DimStyle.Render(res),
+					DimStyle.Render("skip")))
+			} else {
+				s.WriteString(fmt.Sprintf("    %s  %s  %s\n",
+					DimStyle.Render(label),
+					DimStyle.Render(res),
+					DimStyle.Render("skip")))
+			}
 		} else {
-			s.WriteString(fmt.Sprintf("    %s  %s  %d windows  %s\n",
-				DimStyle.Render(label),
-				DimStyle.Render(res),
-				windows,
-				DimStyle.Render("("+layout+")")))
+			layout := LayoutForCount(windows)
+			if selected {
+				s.WriteString(fmt.Sprintf("  %s %s  %s  %s windows  %s\n",
+					TitleStyle.Render(">"),
+					SubtitleStyle.Render(label),
+					DimStyle.Render(res),
+					TitleStyle.Render(fmt.Sprintf("%d", windows)),
+					DimStyle.Render("("+layout+")")))
+			} else {
+				s.WriteString(fmt.Sprintf("    %s  %s  %d windows  %s\n",
+					DimStyle.Render(label),
+					DimStyle.Render(res),
+					windows,
+					DimStyle.Render("("+layout+")")))
+			}
 		}
 
-		if selected {
+		if selected && windows > 0 {
 			s.WriteString(renderLayoutPreview(windows))
 			s.WriteString("\n")
 		}
 	}
 
-	s.WriteString("\n  " + DimStyle.Render("<-> select monitor  up/down adjust windows  Enter launch  Esc quit") + "\n")
+	s.WriteString("\n  " + DimStyle.Render("<-> select monitor  up/down adjust windows (0 = skip)  Enter launch  Esc quit") + "\n")
 	return s.String()
 }

@@ -6,6 +6,38 @@ import (
 	"testing"
 )
 
+func TestIsReservedAccountID(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{"claude", false},
+		{"ama-claude", false},
+		{"profile", false}, // no colon: not the namespace
+		{"profile:ama", true},
+		{"profile:", true},
+		{ProfileKeyPrefix + "anything", true},
+	}
+	for _, tt := range tests {
+		if got := IsReservedAccountID(tt.id); got != tt.want {
+			t.Errorf("IsReservedAccountID(%q) = %v, want %v", tt.id, got, tt.want)
+		}
+	}
+}
+
+// TestUniqueAccountIDNeverReserved ensures a label can never yield an ID that
+// collides with the profile-secret namespace.
+func TestUniqueAccountIDNeverReserved(t *testing.T) {
+	// A label that normalizes toward the reserved namespace must not produce a
+	// reserved ID (the colon is stripped, but guard regardless).
+	for _, label := range []string{"profile:secret", "Profile: AMA", "profile"} {
+		id := UniqueAccountID(label, nil)
+		if IsReservedAccountID(id) {
+			t.Errorf("UniqueAccountID(%q) = %q, which is reserved", label, id)
+		}
+	}
+}
+
 func TestAuthStatusCmds_HasClaude(t *testing.T) {
 	cmd, ok := AuthStatusCmds["claude"]
 	if !ok {
@@ -191,4 +223,85 @@ func TestSuggestedEnvVars(t *testing.T) {
 	if SuggestedEnvVars["claude"][0] != "ANTHROPIC_API_KEY" {
 		t.Errorf("expected claude to suggest ANTHROPIC_API_KEY, got %q", SuggestedEnvVars["claude"][0])
 	}
+}
+
+func TestDefaultAccounts_ClaudeHasNoForcedEffort(t *testing.T) {
+	for _, id := range []string{"claude", "ama-claude"} {
+		a := AccountByID(DefaultAccounts, id)
+		if a == nil {
+			t.Fatalf("expected DefaultAccounts to contain %q", id)
+		}
+		for _, arg := range a.Args {
+			if arg == "--effort" || strings.HasPrefix(arg, "--effort=") {
+				t.Errorf("expected %q to NOT force effort, got %v", id, a.Args)
+			}
+		}
+	}
+}
+
+func TestResolvedArgs_DoesNotAppendEffort(t *testing.T) {
+	a := Account{Command: "claude", Args: []string{"--dangerously-skip-permissions"}}
+	got := a.ResolvedArgs()
+	want := []string{"--dangerously-skip-permissions"}
+	if !stringSliceEqual(got, want) {
+		t.Errorf("ResolvedArgs = %v, want %v", got, want)
+	}
+	// Original Args must be unchanged
+	if len(a.Args) != 1 {
+		t.Errorf("ResolvedArgs mutated receiver Args: %v", a.Args)
+	}
+}
+
+func TestResolvedArgs_PreservesUserEffortOverride(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"space-separated", []string{"--dangerously-skip-permissions", "--effort", "high"}},
+		{"equals-form", []string{"--effort=low", "--dangerously-skip-permissions"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := Account{Command: "claude", Args: tc.args}
+			got := a.ResolvedArgs()
+			if !stringSliceEqual(got, tc.args) {
+				t.Errorf("ResolvedArgs = %v, want unchanged %v", got, tc.args)
+			}
+		})
+	}
+}
+
+func TestResolvedArgs_IgnoresNonClaudeCommands(t *testing.T) {
+	cases := []Account{
+		{Command: "codex", Args: []string{"--dangerously-bypass-approvals-and-sandbox"}},
+		{Command: "gemini", Args: []string{"--yolo"}},
+		{Command: "agent", Args: []string{}},
+	}
+	for _, a := range cases {
+		got := a.ResolvedArgs()
+		if !stringSliceEqual(got, a.Args) {
+			t.Errorf("ResolvedArgs for %q = %v, want unchanged %v", a.Command, got, a.Args)
+		}
+	}
+}
+
+func TestResolvedArgs_ReturnsCopyNotReference(t *testing.T) {
+	a := Account{Command: "codex", Args: []string{"--yolo"}}
+	got := a.ResolvedArgs()
+	got[0] = "mutated"
+	if a.Args[0] == "mutated" {
+		t.Error("ResolvedArgs returned a slice that aliases receiver Args; caller mutation leaked back")
+	}
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

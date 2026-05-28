@@ -34,6 +34,10 @@ func init() {
 	rootCmd.AddCommand(monitorsCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(allCmd)
+	rootCmd.AddCommand(dashCmd)
+	rootCmd.AddCommand(profileCmd)
+	rootCmd.AddCommand(projectCmd)
+	rootCmd.AddCommand(keysCmd)
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {

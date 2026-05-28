@@ -8,7 +8,7 @@ This file is for AI coding agents (Claude Code, Codex, etc.) working on or with 
 
 - **Binary name**: `qs`
 - **Module**: `github.com/bcmister/qs`
-- **Config version**: 4 (auto-migrates from v2/v3)
+- **Config version**: 5 (auto-migrates from v2/v3/v4)
 - **Current version**: v0.4.0
 - **Platform**: Windows only (uses Win32 API)
 
@@ -44,10 +44,26 @@ internal/
     accounts.go                 `qs accounts` — launches account management TUI
     monitors.go                 `qs monitors` — prints detected monitors
     version.go                  `qs version` — prints version string
+    dash.go                     `qs dash` — session dashboard; builds the LaunchResolver + PsmuxEngine
+    profile.go                  `qs profile add/list` — author profiles
+    project.go                  `qs project add/list` — author project bindings
+    keys.go                     `qs keys set/list` — author per-profile secrets (masked)
   config/
-    config.go                   Config struct, Load/Save, v2→v4 and v3→v4 migration
+    config.go                   Config struct, Load/Save, v2/v3/v4 → v5 migration
     accounts.go                 Account struct, DefaultAccounts list, helpers
+    keys.go                     AccountKeys map, profile-secret namespace, masking
+    profile.go                  Profile + GitIdentity structs, lookups
+    service.go                  Service/ServiceStatus/Category/StatusState
+    project.go                  Project struct, ServicesForProject, path lookup
+    sessionenv.go               ResolveSessionEnv/ResolveProfileEnv firewall (clean env)
+    status.go                   ProbeServiceStatus (probes with firewall env)
+    authoring.go                AddProfile/AddService/AddProject, SetProfileKey
     config_test.go              Config tests
+  session/
+    engine.go                   SessionEngine interface, Session/Spec/Event types, LaunchResolver
+    psmux.go                    PsmuxEngine — psmux-backed engine, NewPsmuxEngine
+    poll.go                     Background poller reconciling cached state with psmux
+    swarm.go                    Git Bash / agent-teams shell setup for launched sessions
   launcher/
     launcher.go                 Win32 window spawning + positioning (wt.exe, SetWindowPos)
     launcher_test.go            Launcher tests
@@ -55,6 +71,9 @@ internal/
     monitor.go                  Win32 monitor detection (EnumDisplayMonitors)
   tui/
     picker.go                   Main TUI — project list with fuzzy filter → account selection → launch
+    viewer.go                   Inline file viewer (markdown/code), reused by the dashboard
+    dash.go                     Dashboard model: projects | sessions | context, engine wiring
+    dash_view.go                Dashboard rendering (columns, status dots, snapshot strip)
     setup.go                    Setup wizard TUI (projects root, monitors, accounts)
     first_run.go                First-run flow (no config exists yet)
     accounts.go                 Account management TUI
@@ -68,7 +87,7 @@ internal/
 Location: `~/.qs/config.yaml` (legacy fallback: `~/.cc/config.yaml`)
 
 ```yaml
-version: 4
+version: 5
 projectsRoot: "C:/Users/username/dev"
 defaultAccount: claude
 lastAccount: claude
@@ -83,13 +102,39 @@ monitors:
   - layout: full
     windows:
       - tool: claude
+profiles:
+  - id: personal
+    label: Personal
+    gitIdentity:
+      name: Jane Dev
+      email: jane@example.com
+    accountConfigDirs:
+      claude: "C:/Users/username/.claude-personal"
+services:
+  - id: github
+    label: GitHub
+    category: vcs-identity
+    statusCmd: "gh auth status"
+    requiresEnv: ["GH_TOKEN"]
+    enabled: true
+projects:
+  - id: my-app
+    label: My App
+    path: "C:/Users/username/dev/my-app"
+    profile: personal
+    accounts: ["claude"]
+    defaultAccount: claude
+    services: ["github"]
 ```
 
 Key points:
 - `projectsRoot` is the directory containing project subdirectories
 - `accounts` defines available AI tools — each has `id`, `label`, `command`, `args`, `authCmd`, `installCmd`, `icon`, `enabled`
 - `monitors` defines window layout per physical monitor — each has `layout` (full/vertical/horizontal/grid) and a list of `windows` with a `tool` reference
-- Config is always saved as version 4; older versions are migrated on load in memory
+- `profiles` define identity/secret contexts — each has `id`, `label`, optional `gitIdentity`, `accountConfigDirs` (per-tool isolated config dir), `color`, and `expectedEnv`. Profile *secrets* live in `~/.qs/keys.yaml` under `profile:<id>`, never in `config.yaml`
+- `services` define probeable external dependencies — each has `id`, `label`, `category`, optional `statusCmd`, `requiresEnv`, `enabled`
+- `projects` bind a directory to a `profile`, a set of `accounts`/`services`, and a `defaultAccount`. The dashboard (`qs dash`) and session engine resolve a project's env from its profile
+- Config is always saved as version 5; older versions (v2/v3/v4) are migrated on load in memory (v4→v5 is purely additive)
 - `DefaultConfigPath()` returns `~/.qs/config.yaml`
 - `config.Load("")` tries `~/.qs/config.yaml` then falls back to `~/.cc/config.yaml`
 
@@ -108,7 +153,15 @@ The picker has three stages: `stageProject` → `stageCreate` (optional) → `st
 Monitor detection and window positioning use direct Win32 syscalls via `syscall.NewLazyDLL`. This is Windows-only. The relevant DLLs are `user32.dll` and `kernel32.dll`.
 
 ### Config Migration
-`config.Load()` peeks at the `version` field and routes to `migrateV2()` or `migrateV3()` as needed. Migration happens in memory only — the file is only rewritten on explicit `config.Save()`.
+`config.Load()` peeks at the `version` field and routes to `migrateV2()`, `migrateV3()`, or `migrateV4()` as needed. v4→v5 is purely additive (the new `profiles`/`services`/`projects` slices stay empty), so it only bumps the version. Migration happens in memory only — the file is only rewritten on explicit `config.Save()`.
+
+### Session engine + env firewall
+`qs dash` opens the three-column session dashboard (projects | sessions | context). It builds a `session.LaunchResolver` over `config.ResolveSessionEnv` and constructs a `session.PsmuxEngine` (psmux-backed). The resolver is the **env firewall**: the engine sources every child process environment from it — a clean allowlisted base plus the project's profile layers (secrets, per-tool config dirs, git identity) — and never from `os.Environ()`. Service status dots are probed the same way via `config.ResolveProfileEnv` + `config.ProbeServiceStatus`.
+
+### Authoring commands
+- `qs profile add/list` — manage profiles (flags: `--id`, `--label`, `--git-name`, `--git-email`, `--color`, repeatable `--account-dir accountID=path`).
+- `qs project add <path>/list` — bind a directory to a profile/accounts/services (flags: `--profile`, `--accounts a,b`, `--services x,y`, `--default-account`); the project ID defaults to the folder name.
+- `qs keys set <profileID> <NAME> <VALUE>` / `qs keys list <profileID>` — manage per-profile secrets in `~/.qs/keys.yaml`. `list` masks every value; `set` never echoes the secret.
 
 ## Default Accounts
 
@@ -122,7 +175,7 @@ These are the built-in tool definitions (defined in `internal/config/accounts.go
 | `opencode` | `opencode` | (none) | `npm i -g opencode` | Yes |
 | `cursor` | `agent` | (none) | (none) | Yes |
 
-Claude-based accounts (`claude`, `ama-claude`) automatically set the environment variable `CLAUDE_CODE_EFFORT_LEVEL=max` when launching. This configures Claude Code to use its deepest reasoning mode (Opus 4.6). Users can override this per-account via `qs accounts` (keys editor) or by editing `~/.qs/keys.yaml`.
+Claude-based accounts launch with only `--dangerously-skip-permissions`. Effort is intentionally **not** forced — Claude Code manages its own effort level (via `~/.claude/settings.json effortLevel` or ultracode), so the launcher passes each account's configured `Args` through unchanged (`Account.ResolvedArgs` in `internal/config/accounts.go`) and `DefaultAccountKeys` injects no `CLAUDE_CODE_EFFORT_LEVEL`. To pin effort for a specific account, add an explicit `--effort <level>` to its `Args` in `~/.qs/config.yaml`.
 
 Users can add custom accounts through `qs setup` or `qs accounts`.
 

@@ -31,6 +31,14 @@ var SuggestedEnvVars = map[string][]string{
 	"opencode": {"OPENAI_API_KEY", "ANTHROPIC_API_KEY"},
 }
 
+// IsReservedAccountID reports whether an account ID collides with the
+// profile-secret namespace. The keys layer stores a profile's secrets under
+// "profile:<id>"; an account whose ID also begins with that prefix would siphon
+// those secrets through the account-key layer, so such IDs must be rejected.
+func IsReservedAccountID(id string) bool {
+	return strings.HasPrefix(id, ProfileKeyPrefix)
+}
+
 // UniqueAccountID generates a URL-safe ID from a label, appending -2, -3 etc. on collision.
 func UniqueAccountID(label string, existing []Account) string {
 	base := strings.ToLower(strings.TrimSpace(label))
@@ -38,7 +46,7 @@ func UniqueAccountID(label string, existing []Account) string {
 	re := regexp.MustCompile(`[^a-z0-9]+`)
 	base = re.ReplaceAllString(base, "-")
 	base = strings.Trim(base, "-")
-	if base == "" {
+	if base == "" || IsReservedAccountID(base) {
 		base = "account"
 	}
 
@@ -251,4 +259,14 @@ func (a *Account) FullCommand() string {
 		return a.Command
 	}
 	return a.Command + " " + strings.Join(a.Args, " ")
+}
+
+// ResolvedArgs returns the args that should be used when launching the
+// account's command. Effort is no longer forced here — Claude Code controls
+// its own effort level (via settings.json effortLevel or ultracode), so the
+// launcher passes the account's configured Args through unchanged.
+func (a *Account) ResolvedArgs() []string {
+	out := make([]string, len(a.Args))
+	copy(out, a.Args)
+	return out
 }

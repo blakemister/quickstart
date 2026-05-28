@@ -554,6 +554,10 @@ func (m AccountsModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			// Custom add path (from addMethodCustom)
 			id := config.UniqueAccountID(name, m.accounts)
+			if config.IsReservedAccountID(id) {
+				m.message = "Account ID cannot use the reserved \"profile:\" prefix"
+				return m, nil
+			}
 			m.accounts = append(m.accounts, config.Account{
 				ID:         id,
 				Label:      name,

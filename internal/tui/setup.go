@@ -644,6 +644,9 @@ func (m SetupModel) updateAddAccount(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		id := config.UniqueAccountID(name, m.accounts)
+		if config.IsReservedAccountID(id) {
+			return m, nil
+		}
 		if icon == "" {
 			icon = "⬜"
 		}
