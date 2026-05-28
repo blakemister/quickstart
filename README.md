@@ -54,8 +54,12 @@ go build -o qs.exe .
 
 ```bash
 qs                # Launch project picker
+qs dash           # Open the session dashboard (command center)
 qs setup          # Run the setup wizard
 qs accounts       # Manage AI tool accounts
+qs profile        # Manage profiles (identity/secret contexts)
+qs project        # Manage project bindings
+qs keys           # Manage per-profile secrets
 qs monitors       # List detected monitors
 qs version        # Print version
 ```
@@ -71,6 +75,35 @@ The main TUI lists your project folders with fuzzy search. Type to filter, arrow
 ### Account Selection
 
 After picking a project, choose which AI coding tool to launch. If only one tool is enabled, it launches automatically.
+
+### Session Dashboard
+
+`qs dash` opens a three-column command center: **projects** | **sessions** | **context**. Start a persistent session for a project (`s`), attach to it (`Enter`), stop/kill it (`x`/`k`), and watch a read-only snapshot of the focused session — without ever leaving the dashboard. The context column shows the selected project's docs (CLAUDE.md / README.md / `.claude/*`) and bound-service status dots.
+
+Sessions are launched in an isolated environment: a clean allowlisted base plus the project profile's secrets, per-tool config dirs, and git identity. The host shell's secrets never leak into a launched tool.
+
+| Key | Action |
+|-----|--------|
+| `tab` / `shift+tab` | Cycle focus across columns |
+| `↑` / `↓` | Navigate / scroll the focused column |
+| `s` | Start a session for the selected project |
+| `enter` | Attach to the focused session |
+| `x` / `k` | Stop / kill the focused session |
+| `r` | Refresh projects + sessions |
+| `c` | Cycle the context document |
+| `q` | Quit |
+
+#### Profiles, projects, and secrets
+
+Bind a directory to a profile and services, then launch isolated sessions from the dashboard:
+
+```bash
+qs profile add --id work --label Work --git-name "Jane Dev" --git-email jane@work.com \
+  --account-dir claude=C:/Users/you/.claude-work
+qs keys set work GH_TOKEN ghp_xxx        # stored in ~/.qs/keys.yaml, masked on list
+qs project add C:/Users/you/dev/my-app --profile work --accounts claude --services github
+qs profile list && qs project list && qs keys list work
+```
 
 ---
 
@@ -123,7 +156,7 @@ Configure window counts and layouts per monitor in the setup wizard:
 Config file: `~/.qs/config.yaml`
 
 ```yaml
-version: 4
+version: 5
 projectsRoot: "C:/Users/you/dev"
 defaultAccount: claude
 lastAccount: claude
@@ -142,7 +175,31 @@ monitors:
   - layout: full
     windows:
       - tool: claude
+profiles:
+  - id: work
+    label: Work
+    gitIdentity:
+      name: Jane Dev
+      email: jane@work.com
+    accountConfigDirs:
+      claude: "C:/Users/you/.claude-work"
+services:
+  - id: github
+    label: GitHub
+    category: vcs-identity
+    statusCmd: "gh auth status"
+    enabled: true
+projects:
+  - id: my-app
+    label: My App
+    path: "C:/Users/you/dev/my-app"
+    profile: work
+    accounts: ["claude"]
+    defaultAccount: claude
+    services: ["github"]
 ```
+
+`profiles`, `services`, and `projects` power `qs dash` and the env firewall — profiles supply per-context git identity, isolated tool config dirs, and secrets (secret *values* live in `~/.qs/keys.yaml`, never here). Older config files (v2/v3/v4) are migrated to v5 automatically on load; the v4→v5 step is additive, so existing setups keep working unchanged.
 
 The setup wizard (`qs setup`) walks through all of this interactively:
 
