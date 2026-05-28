@@ -78,7 +78,7 @@ After picking a project, choose which AI coding tool to launch. If only one tool
 
 | Tool | Command | Default |
 |------|---------|---------|
-| Claude Code | `claude --dangerously-skip-permissions --effort max` | Enabled |
+| Claude Code | `claude --dangerously-skip-permissions` | Enabled |
 | OpenAI Codex | `codex --dangerously-bypass-approvals-and-sandbox` | Enabled |
 | Gemini CLI | `gemini --yolo` | Enabled |
 | OpenCode (z.ai) | `opencode` | Enabled |
@@ -131,7 +131,7 @@ accounts:
   - id: claude
     label: Claude Code
     command: claude
-    args: ["--dangerously-skip-permissions", "--effort", "max"]
+    args: ["--dangerously-skip-permissions"]
     enabled: true
   - id: codex
     label: OpenAI Codex

@@ -167,7 +167,7 @@ var DefaultAccounts = []Account{
 		ID:         "claude",
 		Label:      "Claude Code",
 		Command:    "claude",
-		Args:       []string{"--dangerously-skip-permissions", "--effort", "max"},
+		Args:       []string{"--dangerously-skip-permissions"},
 		AuthCmd:    "claude /login",
 		InstallCmd: "npm i -g @anthropic-ai/claude-code",
 		Icon:       "\U0001F7E0",
@@ -207,7 +207,7 @@ var DefaultAccounts = []Account{
 		ID:         "ama-claude",
 		Label:      "AMA Claude",
 		Command:    "claude",
-		Args:       []string{"--dangerously-skip-permissions", "--effort", "max"},
+		Args:       []string{"--dangerously-skip-permissions"},
 		AuthCmd:    "claude auth login",
 		InstallCmd: "npm i -g @anthropic-ai/claude-code",
 		Icon:       "\U0001F7E3",
@@ -254,20 +254,11 @@ func (a *Account) FullCommand() string {
 }
 
 // ResolvedArgs returns the args that should be used when launching the
-// account's command. For claude-based accounts, "--effort max" is appended
-// unless the user has already set an explicit --effort flag in Args. CLI
-// args beat settings.json in Claude Code, so this guarantees max effort
-// regardless of ~/.claude/settings.json effortLevel.
+// account's command. Effort is no longer forced here — Claude Code controls
+// its own effort level (via settings.json effortLevel or ultracode), so the
+// launcher passes the account's configured Args through unchanged.
 func (a *Account) ResolvedArgs() []string {
 	out := make([]string, len(a.Args))
 	copy(out, a.Args)
-	if a.Command != "claude" {
-		return out
-	}
-	for _, arg := range a.Args {
-		if arg == "--effort" || strings.HasPrefix(arg, "--effort=") {
-			return out
-		}
-	}
-	return append(out, "--effort", "max")
+	return out
 }

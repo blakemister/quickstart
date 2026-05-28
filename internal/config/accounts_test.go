@@ -193,29 +193,24 @@ func TestSuggestedEnvVars(t *testing.T) {
 	}
 }
 
-func TestDefaultAccounts_ClaudeHasMaxEffort(t *testing.T) {
+func TestDefaultAccounts_ClaudeHasNoForcedEffort(t *testing.T) {
 	for _, id := range []string{"claude", "ama-claude"} {
 		a := AccountByID(DefaultAccounts, id)
 		if a == nil {
 			t.Fatalf("expected DefaultAccounts to contain %q", id)
 		}
-		found := false
-		for i, arg := range a.Args {
-			if arg == "--effort" && i+1 < len(a.Args) && a.Args[i+1] == "max" {
-				found = true
-				break
+		for _, arg := range a.Args {
+			if arg == "--effort" || strings.HasPrefix(arg, "--effort=") {
+				t.Errorf("expected %q to NOT force effort, got %v", id, a.Args)
 			}
-		}
-		if !found {
-			t.Errorf("expected %q to have '--effort max' in Args, got %v", id, a.Args)
 		}
 	}
 }
 
-func TestResolvedArgs_AppendsEffortForClaudeCommand(t *testing.T) {
+func TestResolvedArgs_DoesNotAppendEffort(t *testing.T) {
 	a := Account{Command: "claude", Args: []string{"--dangerously-skip-permissions"}}
 	got := a.ResolvedArgs()
-	want := []string{"--dangerously-skip-permissions", "--effort", "max"}
+	want := []string{"--dangerously-skip-permissions"}
 	if !stringSliceEqual(got, want) {
 		t.Errorf("ResolvedArgs = %v, want %v", got, want)
 	}
