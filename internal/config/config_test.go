@@ -35,8 +35,8 @@ func TestDefaultAccounts(t *testing.T) {
 func TestNewDefaultConfig(t *testing.T) {
 	cfg := NewDefaultConfig("C:/dev")
 
-	if cfg.Version != 4 {
-		t.Fatalf("expected version 4, got %d", cfg.Version)
+	if cfg.Version != 5 {
+		t.Fatalf("expected version 5, got %d", cfg.Version)
 	}
 	if cfg.ProjectsRoot != "C:/dev" {
 		t.Fatalf("expected projects root C:/dev, got %q", cfg.ProjectsRoot)
@@ -62,8 +62,8 @@ func TestEnsureDefaults(t *testing.T) {
 	cfg := &Config{}
 	EnsureDefaults(cfg)
 
-	if cfg.Version != 4 {
-		t.Fatalf("expected version 4, got %d", cfg.Version)
+	if cfg.Version != 5 {
+		t.Fatalf("expected version 5, got %d", cfg.Version)
 	}
 	if cfg.DefaultAccount == "" {
 		t.Fatal("expected default account to be populated")
@@ -138,8 +138,8 @@ monitors:
 		t.Fatalf("migrateV3 failed: %v", err)
 	}
 
-	if cfg.Version != 4 {
-		t.Errorf("expected version 4, got %d", cfg.Version)
+	if cfg.Version != 5 {
+		t.Errorf("expected version 5, got %d", cfg.Version)
 	}
 
 	if cfg.ProjectsRoot != "/home/test/.1dev" {
@@ -183,8 +183,8 @@ monitors:
 		t.Fatalf("migrateV2 failed: %v", err)
 	}
 
-	if cfg.Version != 4 {
-		t.Errorf("expected version 4, got %d", cfg.Version)
+	if cfg.Version != 5 {
+		t.Errorf("expected version 5, got %d", cfg.Version)
 	}
 
 	if len(cfg.Monitors) != 2 {
@@ -244,8 +244,8 @@ monitors:
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	if cfg.Version != 4 {
-		t.Errorf("expected version 4, got %d", cfg.Version)
+	if cfg.Version != 5 {
+		t.Errorf("expected version 5, got %d", cfg.Version)
 	}
 	if cfg.DefaultAccount != "claude" {
 		t.Errorf("expected defaultAccount 'claude', got %q", cfg.DefaultAccount)
@@ -297,8 +297,8 @@ func TestSaveAndLoadV4(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	if loaded.Version != 4 {
-		t.Errorf("expected version 4, got %d", loaded.Version)
+	if loaded.Version != 5 {
+		t.Errorf("expected version 5, got %d", loaded.Version)
 	}
 	if loaded.DefaultAccount != "claude" {
 		t.Errorf("expected defaultAccount 'claude', got %q", loaded.DefaultAccount)
@@ -340,8 +340,8 @@ monitors:
 	}
 
 	// Should have been migrated to v4
-	if cfg.Version != 4 {
-		t.Errorf("expected version 4 after migration, got %d", cfg.Version)
+	if cfg.Version != 5 {
+		t.Errorf("expected version 5 after migration, got %d", cfg.Version)
 	}
 
 	// cc -> claude mapping

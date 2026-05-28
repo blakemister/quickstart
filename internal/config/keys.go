@@ -96,6 +96,25 @@ func KeysForAccount(keys AccountKeys, accountID string) map[string]string {
 	return keys[accountID]
 }
 
+// ProfileKeyPrefix namespaces a profile's secrets within the keys map. Profile
+// secrets are stored under the top-level key "profile:<id>" so they never
+// collide with account IDs.
+const ProfileKeyPrefix = "profile:"
+
+// ProfileKeyID returns the keys-map key for a profile's secret namespace.
+func ProfileKeyID(profileID string) string {
+	return ProfileKeyPrefix + profileID
+}
+
+// KeysForProfile returns the env var map for a specific profile, read from the
+// top-level "profile:<id>" entry. Returns nil if the profile has no keys.
+func KeysForProfile(keys AccountKeys, profileID string) map[string]string {
+	if keys == nil {
+		return nil
+	}
+	return keys[ProfileKeyID(profileID)]
+}
+
 // UserAPIKeys returns only user-provided API keys for an account,
 // excluding internal env vars from DefaultAccountKeys (like CLAUDE_CONFIG_DIR).
 func UserAPIKeys(keys AccountKeys, accountID string) map[string]string {

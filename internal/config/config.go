@@ -33,7 +33,11 @@ func (mc *MonitorConfig) ToolFor(idx int) string {
 	return "claude"
 }
 
-// Config represents the application configuration (v4)
+// CurrentVersion is the config schema version written by Save. Older versions
+// are migrated to this in memory on Load.
+const CurrentVersion = 5
+
+// Config represents the application configuration (v5)
 type Config struct {
 	Version        int             `yaml:"version"`
 	ProjectsRoot   string          `yaml:"projectsRoot"`
@@ -41,6 +45,9 @@ type Config struct {
 	LastAccount    string          `yaml:"lastAccount,omitempty"`
 	Accounts       []Account       `yaml:"accounts"`
 	Monitors       []MonitorConfig `yaml:"monitors"`
+	Profiles       []Profile       `yaml:"profiles,omitempty"`
+	Services       []Service       `yaml:"services,omitempty"`
+	Projects       []Project       `yaml:"projects,omitempty"`
 }
 
 // v2Config is the old format used for migration
@@ -131,6 +138,8 @@ func Load(path string) (*Config, error) {
 		return migrateV2(data)
 	case peek.Version == 3:
 		return migrateV3(data)
+	case peek.Version == 4:
+		return migrateV4(data)
 	default:
 		var cfg Config
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
@@ -140,7 +149,19 @@ func Load(path string) (*Config, error) {
 	}
 }
 
-// migrateV2 converts a v2 config to v4
+// migrateV4 converts a v4 config to v5. This is purely additive: a v4 file
+// unmarshals cleanly into the v5 Config struct (the new Profiles/Services/
+// Projects slices simply stay empty), so we only need to bump the version.
+func migrateV4(data []byte) (*Config, error) {
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse v4 config: %w", err)
+	}
+	cfg.Version = CurrentVersion
+	return &cfg, nil
+}
+
+// migrateV2 converts a v2 config to v5
 func migrateV2(data []byte) (*Config, error) {
 	var old v2Config
 	if err := yaml.Unmarshal(data, &old); err != nil {
@@ -164,7 +185,7 @@ func migrateV2(data []byte) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Version:        4,
+		Version:        CurrentVersion,
 		ProjectsRoot:   old.ProjectsRoot,
 		DefaultAccount: "claude",
 		LastAccount:    "claude",
@@ -175,7 +196,7 @@ func migrateV2(data []byte) (*Config, error) {
 	return cfg, nil
 }
 
-// migrateV3 converts a v3 config to v4
+// migrateV3 converts a v3 config to v5
 func migrateV3(data []byte) (*Config, error) {
 	var old v3Config
 	if err := yaml.Unmarshal(data, &old); err != nil {
@@ -196,7 +217,7 @@ func migrateV3(data []byte) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Version:        4,
+		Version:        CurrentVersion,
 		ProjectsRoot:   old.ProjectsRoot,
 		DefaultAccount: "claude",
 		LastAccount:    "claude",
@@ -266,7 +287,7 @@ func mergeNewDefaults(cfg *Config) {
 // NewDefaultConfig returns a config seeded with defaults and the given projects root.
 func NewDefaultConfig(projectsRoot string) *Config {
 	cfg := &Config{
-		Version:        4,
+		Version:        CurrentVersion,
 		ProjectsRoot:   strings.TrimSpace(projectsRoot),
 		DefaultAccount: "claude",
 		LastAccount:    "claude",
@@ -290,7 +311,7 @@ func EnsureDefaults(cfg *Config) {
 	}
 
 	if cfg.Version == 0 {
-		cfg.Version = 4
+		cfg.Version = CurrentVersion
 	}
 	if len(cfg.Accounts) == 0 {
 		cfg.Accounts = copyDefaultAccounts()
@@ -320,6 +341,73 @@ func EnsureDefaults(cfg *Config) {
 	}
 
 	ensureAccountDefaults(cfg)
+	ensureProfileDefaults(cfg)
+	validateProjectRefs(cfg)
+}
+
+// DefaultProfileID is the ID of the always-present personal profile.
+const DefaultProfileID = "personal"
+
+// ensureProfileDefaults seeds a default "personal" profile when no profiles
+// exist. The personal profile carries no secrets and no git override — it is a
+// neutral baseline so that unbound projects resolve to a clean session.
+//
+// New optional fields are fill-only-if-empty: this never overwrites
+// user-provided profile data (unlike ensureAccountDefaults, which intentionally
+// force-syncs built-in account args). Guarding that distinction is critical so
+// a user-set GitIdentity is not clobbered on every load.
+func ensureProfileDefaults(cfg *Config) {
+	if len(cfg.Profiles) == 0 {
+		cfg.Profiles = []Profile{
+			{
+				ID:    DefaultProfileID,
+				Label: "Personal",
+			},
+		}
+	}
+}
+
+// validateProjectRefs drops dangling references on each project so a stale or
+// hand-edited config never points a project at a profile/account/service that
+// no longer exists. References are pruned silently (no panic); the project
+// itself is retained even if all its references were dangling.
+func validateProjectRefs(cfg *Config) {
+	profileIDs := make(map[string]bool, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		profileIDs[p.ID] = true
+	}
+	accountIDs := make(map[string]bool, len(cfg.Accounts))
+	for _, a := range cfg.Accounts {
+		accountIDs[a.ID] = true
+	}
+	serviceIDs := make(map[string]bool, len(cfg.Services))
+	for _, s := range cfg.Services {
+		serviceIDs[s.ID] = true
+	}
+
+	for i := range cfg.Projects {
+		p := &cfg.Projects[i]
+		if p.Profile != "" && !profileIDs[p.Profile] {
+			p.Profile = ""
+		}
+		p.Accounts = filterKnown(p.Accounts, accountIDs)
+		if p.DefaultAccount != "" && !accountIDs[p.DefaultAccount] {
+			p.DefaultAccount = ""
+		}
+		p.Services = filterKnown(p.Services, serviceIDs)
+	}
+}
+
+// filterKnown returns the IDs present in known, preserving order. Returns nil
+// when nothing survives so empty slices stay omitempty in YAML.
+func filterKnown(ids []string, known map[string]bool) []string {
+	var out []string
+	for _, id := range ids {
+		if known[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // ensureAccountDefaults syncs args, auth, and install commands for built-in account IDs.
@@ -371,7 +459,7 @@ func Save(cfg *Config, path string) error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	cfg.Version = 4
+	cfg.Version = CurrentVersion
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
