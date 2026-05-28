@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bcmister/qs/internal/config"
+	"github.com/bcmister/qs/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -106,7 +107,7 @@ func TestDashboardSelectProjectTriggersContextAndProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Bind a service so the probe batch has something to probe.
-	m.boundServices = []Service{{ID: "github", Label: "GitHub", Enabled: true}}
+	m.boundServices = []config.Service{{ID: "github", Label: "GitHub", Enabled: true}}
 
 	cmd := m.selectProjectCmd()
 	if cmd == nil {
@@ -119,8 +120,8 @@ func TestDashboardSelectProjectTriggersContextAndProbe(t *testing.T) {
 		switch v := msg.(type) {
 		case contextLoadedMsg:
 			sawContext = true
-			if v.title != "CLAUDE.md" {
-				t.Errorf("context title = %q, want CLAUDE.md", v.title)
+			if len(v.docs) == 0 || filepath.Base(v.docs[0]) != "CLAUDE.md" {
+				t.Errorf("context docs = %v, want CLAUDE.md first", v.docs)
 			}
 		case probeBatchMsg:
 			sawProbe = true
@@ -164,10 +165,10 @@ func TestDashboardProbeBatchEmitsServiceStatus(t *testing.T) {
 
 func TestDashboardServiceStatusMsgUpdatesMap(t *testing.T) {
 	m, _, _ := newTestDashboard(t, "alpha")
-	st := ServiceStatus{ServiceID: "github", State: StatusAuthed, CheckedAt: time.Now()}
+	st := config.ServiceStatus{ServiceID: "github", State: config.StatusAuthed, CheckedAt: time.Now()}
 	model, _ := m.Update(serviceStatusMsg{status: st})
 	got := model.(DashboardModel).serviceStatus["github"]
-	if got.State != StatusAuthed {
+	if got.State != config.StatusAuthed {
 		t.Fatalf("status state = %v, want StatusAuthed", got.State)
 	}
 }
@@ -179,10 +180,10 @@ func TestDashboardSessionEventUpdatesList(t *testing.T) {
 	}
 
 	// Seed the engine so List() reflects the new session, then push the event.
-	s := Session{ID: "sess-1", ProjectID: "alpha", AccountID: "claude", State: SessionRunning}
+	s := session.Session{ID: "sess-1", ProjectID: "alpha", AccountID: "claude", State: session.StateRunning}
 	eng.seed(s)
 
-	model, _ := m.Update(sessionEventMsg{event: SessionEvent{Kind: EventStarted, Session: s}})
+	model, _ := m.Update(sessionEventMsg{event: session.SessionEvent{Kind: session.EventStarted, Session: s}})
 	sessions := model.(DashboardModel).sessions
 	if len(sessions) != 1 || sessions[0].ID != "sess-1" {
 		t.Fatalf("expected session sess-1 in list, got %+v", sessions)
@@ -191,15 +192,15 @@ func TestDashboardSessionEventUpdatesList(t *testing.T) {
 
 func TestDashboardSessionEventReissuesSubscription(t *testing.T) {
 	m, eng, _ := newTestDashboard(t, "alpha")
-	s := Session{ID: "sess-1", AccountID: "claude", State: SessionRunning}
+	s := session.Session{ID: "sess-1", AccountID: "claude", State: session.StateRunning}
 	eng.seed(s)
 
-	_, cmd := m.Update(sessionEventMsg{event: SessionEvent{Kind: EventStarted, Session: s}})
+	_, cmd := m.Update(sessionEventMsg{event: session.SessionEvent{Kind: session.EventStarted, Session: s}})
 	if cmd == nil {
 		t.Fatal("expected a Cmd (re-subscription + capture) after a session event")
 	}
 	// Pushing another event should let the re-issued subscription resolve.
-	eng.push(SessionEvent{Kind: EventActivity, Session: s})
+	eng.push(session.SessionEvent{Kind: session.EventActivity, Session: s})
 	msgs := drainBatch(cmd)
 	var sawEvent bool
 	for _, msg := range msgs {
@@ -225,7 +226,7 @@ func TestDashboardStartIssuesEngineStart(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected sessionEventMsg, got %T", msg)
 	}
-	if ev.event.Kind != EventStarted {
+	if ev.event.Kind != session.EventStarted {
 		t.Fatalf("event kind = %v, want started", ev.event.Kind)
 	}
 	if len(eng.started) != 1 || eng.started[0].ProjectID != "alpha" {
@@ -235,7 +236,7 @@ func TestDashboardStartIssuesEngineStart(t *testing.T) {
 
 func TestDashboardStopAndKill(t *testing.T) {
 	m, eng, _ := newTestDashboard(t, "alpha")
-	s := Session{ID: "sess-1", AccountID: "claude", State: SessionRunning}
+	s := session.Session{ID: "sess-1", AccountID: "claude", State: session.StateRunning}
 	eng.seed(s)
 	m.sessions = eng.List()
 	m.focus = sessionsPane
@@ -258,7 +259,7 @@ func TestDashboardStopAndKill(t *testing.T) {
 
 func TestDashboardEnterIssuesAttachCmd(t *testing.T) {
 	m, eng, _ := newTestDashboard(t, "alpha")
-	s := Session{ID: "sess-1", AccountID: "claude", State: SessionRunning}
+	s := session.Session{ID: "sess-1", AccountID: "claude", State: session.StateRunning}
 	eng.seed(s)
 	m.sessions = eng.List()
 	m.focus = sessionsPane
@@ -283,22 +284,22 @@ func TestDashboardContextCycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Load context for alpha synchronously via the resolver.
-	title, content, docs, err := resolveContextDoc(a)
-	if err != nil {
-		t.Fatal(err)
+	// Resolve alpha's candidate docs synchronously.
+	docs := resolveContextDocs(a)
+	if len(docs) < 2 {
+		t.Fatalf("expected at least 2 candidate docs, got %v", docs)
 	}
-	model, _ := m.Update(contextLoadedMsg{projectID: "alpha", title: title, content: content, docs: docs})
+	model, _ := m.Update(contextLoadedMsg{projectID: "alpha", docs: docs})
 	dm := model.(DashboardModel)
-	if dm.viewer == nil || dm.viewer.Title() != "CLAUDE.md" {
-		t.Fatalf("expected viewer titled CLAUDE.md, got %v", dm.viewer)
+	if dm.viewer == nil || dm.contextTitle != "CLAUDE.md" {
+		t.Fatalf("expected context titled CLAUDE.md, got %q (viewer=%v)", dm.contextTitle, dm.viewer)
 	}
 
 	// 'c' cycles to the next candidate (README.md).
 	model, _ = dm.Update(runeKey('c'))
 	dm = model.(DashboardModel)
-	if dm.viewer.Title() != "README.md" {
-		t.Fatalf("after cycle viewer title = %q, want README.md", dm.viewer.Title())
+	if dm.contextTitle != "README.md" {
+		t.Fatalf("after cycle context title = %q, want README.md", dm.contextTitle)
 	}
 }
 

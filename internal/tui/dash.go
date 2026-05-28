@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bcmister/qs/internal/config"
+	"github.com/bcmister/qs/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -22,27 +23,52 @@ const (
 // snapshot strip.
 const snapshotInterval = 1800 * time.Millisecond
 
+// contextCandidates is the ordered list of context-doc filenames the dashboard
+// resolves for a project. The first that exists becomes the primary document;
+// the rest are cyclable with 'c'.
+var contextCandidates = []string{
+	"CLAUDE.md",
+	"README.md",
+	"AGENTS.md",
+	filepath.Join(".claude", "CLAUDE.md"),
+	filepath.Join(".claude", "README.md"),
+}
+
+// resolveContextDocs returns the candidate context-document PATHS that exist for
+// a project root, in preference order. The viewer reads the file itself, so this
+// only resolves paths (never contents). Returns nil when none exist.
+func resolveContextDocs(root string) []string {
+	if root == "" {
+		return nil
+	}
+	var found []string
+	for _, name := range contextCandidates {
+		p := filepath.Join(root, name)
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			found = append(found, p)
+		}
+	}
+	return found
+}
+
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
 
 // sessionEventMsg wraps one value read from the engine's Events() channel.
 type sessionEventMsg struct {
-	event SessionEvent
+	event session.SessionEvent
 }
 
 // serviceStatusMsg carries the probed status for one bound service.
 type serviceStatusMsg struct {
-	status ServiceStatus
+	status config.ServiceStatus
 }
 
-// contextLoadedMsg carries the resolved context document for a project.
+// contextLoadedMsg carries the resolved context-document paths for a project.
 type contextLoadedMsg struct {
 	projectID string
-	title     string
-	content   string
 	docs      []string // candidate doc paths the user can cycle through
-	err       error
 }
 
 // snapshotMsg carries a fresh read-only capture of the focused session.
@@ -74,12 +100,12 @@ type probeBatchMsg struct {
 // ---------------------------------------------------------------------------
 
 // DashboardModel is the three-column session dashboard: projects | sessions |
-// context. It drives sessions through the sessionEngine interface and renders
-// bound-service status plus a read-only snapshot of the focused session.
+// context. It drives sessions through the session.SessionEngine interface and
+// renders bound-service status plus a read-only snapshot of the focused session.
 type DashboardModel struct {
 	cfg    *config.Config
 	keys   config.AccountKeys
-	engine sessionEngine
+	engine session.SessionEngine
 
 	width  int
 	height int
@@ -91,17 +117,18 @@ type DashboardModel struct {
 	filter     string
 
 	// Bound services for the selected project
-	boundServices []Service
-	serviceStatus map[string]ServiceStatus
+	boundServices []config.Service
+	serviceStatus map[string]config.ServiceStatus
 
 	// Sessions pane
-	sessions   []Session
+	sessions   []session.Session
 	sessionCur int
 
 	// Context pane
-	viewer      *viewerModel
-	contextDocs []string
-	contextIdx  int
+	viewer       *viewerModel
+	contextDocs  []string
+	contextIdx   int
+	contextTitle string // filepath.Base of the current doc (viewer has no Title())
 
 	// Read-only snapshot strip
 	snapshot string
@@ -119,9 +146,9 @@ type DashboardModel struct {
 }
 
 // NewDashboard builds a dashboard model bound to the given engine and config.
-func NewDashboard(cfg *config.Config, engine sessionEngine) DashboardModel {
+func NewDashboard(cfg *config.Config, engine session.SessionEngine) DashboardModel {
 	keys, _ := config.LoadKeys()
-	projects := scanEntries(cfg.ProjectsRoot)
+	projects := projectEntries(cfg.ProjectsRoot)
 
 	m := DashboardModel{
 		cfg:           cfg,
@@ -129,12 +156,25 @@ func NewDashboard(cfg *config.Config, engine sessionEngine) DashboardModel {
 		engine:        engine,
 		focus:         projectsPane,
 		projects:      projects,
-		serviceStatus: make(map[string]ServiceStatus),
+		serviceStatus: make(map[string]config.ServiceStatus),
 	}
 	if engine != nil {
 		m.sessions = engine.List()
 	}
 	return m
+}
+
+// projectEntries lists only the directory entries under root (project folders),
+// dropping files the shared scanEntries also returns.
+func projectEntries(root string) []entry {
+	all := scanEntries(root)
+	out := all[:0]
+	for _, e := range all {
+		if e.isDir {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Init starts the long-lived event subscription and the snapshot tick, and
@@ -332,29 +372,29 @@ func (m *DashboardModel) startSelected() tea.Cmd {
 		accountID = m.cfg.LastAccount
 	}
 	engine := m.engine
-	spec := SessionSpec{ProjectID: projectID, AccountID: accountID}
+	spec := session.SessionSpec{ProjectID: projectID, AccountID: accountID}
 	return func() tea.Msg {
 		s, err := engine.Start(spec)
 		if err != nil {
-			return sessionEventMsg{event: SessionEvent{Kind: EventError, Err: err}}
+			return sessionEventMsg{event: session.SessionEvent{Kind: session.EventError, Err: err}}
 		}
-		return sessionEventMsg{event: SessionEvent{Kind: EventStarted, Session: s}}
+		return sessionEventMsg{event: session.SessionEvent{Kind: session.EventStarted, Session: s}}
 	}
 }
 
 // stopSelected stops the focused session.
 func (m *DashboardModel) stopSelected() tea.Cmd {
-	return m.lifecycleCmd(func(id string) error { return m.engine.Stop(id) }, EventStateChange)
+	return m.lifecycleCmd(func(id string) error { return m.engine.Stop(id) }, session.EventStateChange)
 }
 
 // killSelected kills the focused session.
 func (m *DashboardModel) killSelected() tea.Cmd {
-	return m.lifecycleCmd(func(id string) error { return m.engine.Kill(id) }, EventExited)
+	return m.lifecycleCmd(func(id string) error { return m.engine.Kill(id) }, session.EventExited)
 }
 
 // lifecycleCmd runs a stop/kill action on the focused session off-thread and
 // reports the result as a sessionEventMsg so the list reconciles.
-func (m *DashboardModel) lifecycleCmd(action func(string) error, kind SessionEventKind) tea.Cmd {
+func (m *DashboardModel) lifecycleCmd(action func(string) error, kind session.SessionEventKind) tea.Cmd {
 	if m.engine == nil {
 		return nil
 	}
@@ -364,9 +404,9 @@ func (m *DashboardModel) lifecycleCmd(action func(string) error, kind SessionEve
 	}
 	return func() tea.Msg {
 		if err := action(id); err != nil {
-			return sessionEventMsg{event: SessionEvent{Kind: EventError, Session: Session{ID: id}, Err: err}}
+			return sessionEventMsg{event: session.SessionEvent{Kind: session.EventError, Session: session.Session{ID: id}, Err: err}}
 		}
-		return sessionEventMsg{event: SessionEvent{Kind: kind, Session: Session{ID: id}}}
+		return sessionEventMsg{event: session.SessionEvent{Kind: kind, Session: session.Session{ID: id}}}
 	}
 }
 
@@ -394,7 +434,7 @@ func (m DashboardModel) attachSelected() (tea.Model, tea.Cmd) {
 
 // refresh re-scans projects and re-reads the session list from the engine.
 func (m DashboardModel) refresh() (tea.Model, tea.Cmd) {
-	m.projects = scanEntries(m.cfg.ProjectsRoot)
+	m.projects = projectEntries(m.cfg.ProjectsRoot)
 	if m.projectCur >= len(m.projects) {
 		m.projectCur = len(m.projects) - 1
 	}
@@ -414,25 +454,31 @@ func (m *DashboardModel) cycleContext() {
 		return
 	}
 	m.contextIdx = (m.contextIdx + 1) % len(m.contextDocs)
-	path := m.contextDocs[m.contextIdx]
-	data, err := os.ReadFile(path)
-	if err != nil {
-		m.statusMsg = err.Error()
-		m.statusErr = true
+	m.loadCurrentDoc()
+}
+
+// loadCurrentDoc builds the viewer for the doc at contextIdx and tracks its
+// title. The viewer reads the file itself.
+func (m *DashboardModel) loadCurrentDoc() {
+	if m.contextIdx < 0 || m.contextIdx >= len(m.contextDocs) {
+		m.viewer = nil
+		m.contextTitle = ""
 		return
 	}
-	m.viewer = newViewerModel(filepath.Base(path), string(data))
-	m.resizeViewer()
+	path := m.contextDocs[m.contextIdx]
+	colW, bodyH := m.contextColumnSize()
+	m.viewer = newViewer(path, colW, bodyH-viewerChrome)
+	m.contextTitle = filepath.Base(path)
 }
 
 // applySessionEvent reconciles the session list with one engine event.
-func (m *DashboardModel) applySessionEvent(ev SessionEvent) {
+func (m *DashboardModel) applySessionEvent(ev session.SessionEvent) {
 	if m.engine != nil {
 		m.sessions = m.engine.List()
 	} else {
 		m.upsertSession(ev.Session)
 	}
-	if ev.Kind == EventError && ev.Err != nil {
+	if ev.Kind == session.EventError && ev.Err != nil {
 		m.statusMsg = ev.Err.Error()
 		m.statusErr = true
 	}
@@ -441,7 +487,7 @@ func (m *DashboardModel) applySessionEvent(ev SessionEvent) {
 
 // upsertSession inserts or updates a session by ID (used when there is no
 // engine List() to reconcile against, e.g. in tests).
-func (m *DashboardModel) upsertSession(s Session) {
+func (m *DashboardModel) upsertSession(s session.Session) {
 	for i := range m.sessions {
 		if m.sessions[i].ID == s.ID {
 			m.sessions[i] = s
@@ -451,17 +497,17 @@ func (m *DashboardModel) upsertSession(s Session) {
 	m.sessions = append(m.sessions, s)
 }
 
-// applyContextLoaded installs a freshly loaded context document.
+// applyContextLoaded installs the freshly resolved context-document paths and
+// loads the primary one into the viewer.
 func (m *DashboardModel) applyContextLoaded(msg contextLoadedMsg) {
-	if msg.err != nil {
-		m.statusMsg = msg.err.Error()
-		m.statusErr = true
-		return
-	}
-	m.viewer = newViewerModel(msg.title, msg.content)
 	m.contextDocs = msg.docs
 	m.contextIdx = 0
-	m.resizeViewer()
+	if len(m.contextDocs) == 0 {
+		m.viewer = nil
+		m.contextTitle = ""
+		return
+	}
+	m.loadCurrentDoc()
 }
 
 // clampSessionCursor keeps the session cursor within bounds.
@@ -485,7 +531,16 @@ func (m DashboardModel) focusedSessionID() string {
 // selectedProjectID returns the highlighted project's name, or "".
 func (m DashboardModel) selectedProjectID() string {
 	if m.projectCur >= 0 && m.projectCur < len(m.projects) {
-		return m.projects[m.projectCur].Name
+		return m.projects[m.projectCur].name
+	}
+	return ""
+}
+
+// selectedProjectPath returns the filesystem path of the highlighted project,
+// joining the project name onto the configured projects root.
+func (m DashboardModel) selectedProjectPath() string {
+	if m.projectCur >= 0 && m.projectCur < len(m.projects) {
+		return filepath.Join(m.cfg.ProjectsRoot, m.projects[m.projectCur].name)
 	}
 	return ""
 }
@@ -512,7 +567,7 @@ func (m DashboardModel) Err() error {
 const debounceInterval = 250 * time.Millisecond
 
 // selectProjectCmd is fired when the selected project changes. It batches (1) a
-// context-document load and (2) a debounced service-probe trigger. It also
+// context-document resolution and (2) a debounced service-probe trigger. It also
 // resets boundServices/serviceStatus for the new project. Mutating state here
 // is intentional: callers invoke it on a *DashboardModel.
 func (m *DashboardModel) selectProjectCmd() tea.Cmd {
@@ -520,13 +575,10 @@ func (m *DashboardModel) selectProjectCmd() tea.Cmd {
 	if projectID == "" {
 		return nil
 	}
-	root := ""
-	if m.projectCur >= 0 && m.projectCur < len(m.projects) {
-		root = m.projects[m.projectCur].Path
-	}
+	root := m.selectedProjectPath()
 
-	m.boundServices = servicesForProject(m.cfg, projectID)
-	m.serviceStatus = make(map[string]ServiceStatus)
+	m.boundServices = config.ServicesForProject(m.cfg, projectID)
+	m.serviceStatus = make(map[string]config.ServiceStatus)
 	m.probeSeq++
 	seq := m.probeSeq
 
@@ -536,17 +588,13 @@ func (m *DashboardModel) selectProjectCmd() tea.Cmd {
 	)
 }
 
-// loadContextCmd resolves a project's context document (CLAUDE.md → README.md →
-// .claude/* candidates) off-thread and emits a contextLoadedMsg.
+// loadContextCmd resolves a project's candidate context documents (CLAUDE.md →
+// README.md → .claude/* candidates) off-thread and emits a contextLoadedMsg.
 func loadContextCmd(projectID, root string) tea.Cmd {
 	return func() tea.Msg {
-		title, content, docs, err := resolveContextDoc(root)
 		return contextLoadedMsg{
 			projectID: projectID,
-			title:     title,
-			content:   content,
-			docs:      docs,
-			err:       err,
+			docs:      resolveContextDocs(root),
 		}
 	}
 }
@@ -567,15 +615,26 @@ func (m DashboardModel) probeServicesCmd(projectID string) tea.Cmd {
 	}
 	cmds := make([]tea.Cmd, 0, len(m.boundServices))
 	for _, svc := range m.boundServices {
-		cmds = append(cmds, probeServiceCmd(svc, projectID))
+		cmds = append(cmds, probeServiceCmd(m.cfg, m.keys, svc, projectID))
 	}
 	return tea.Batch(cmds...)
 }
 
-// probeServiceCmd probes a single service's status off-thread.
-func probeServiceCmd(svc Service, projectID string) tea.Cmd {
+// probeServiceCmd probes a single service's status off-thread. It resolves the
+// project's firewall env first and probes the service against it (never
+// os.Environ()); an env-resolution failure yields a StatusError result.
+func probeServiceCmd(cfg *config.Config, keys config.AccountKeys, svc config.Service, projectID string) tea.Cmd {
 	return func() tea.Msg {
-		return serviceStatusMsg{status: probeServiceStatus(svc, projectID)}
+		env, err := config.ResolveProfileEnv(cfg, keys, projectID)
+		if err != nil {
+			return serviceStatusMsg{status: config.ServiceStatus{
+				ServiceID: svc.ID,
+				State:     config.StatusError,
+				Detail:    err.Error(),
+				CheckedAt: time.Now(),
+			}}
+		}
+		return serviceStatusMsg{status: config.ProbeServiceStatus(svc, env)}
 	}
 }
 

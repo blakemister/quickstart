@@ -5,19 +5,22 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/bcmister/qs/internal/config"
+	"github.com/bcmister/qs/internal/session"
 )
 
-// fakeEngine is an in-memory sessionEngine for tests. It tracks sessions in a
-// map and exposes a channel callers push SessionEvents onto, mirroring A's real
-// engine closely enough to exercise the dashboard's Update loop.
+// fakeEngine is an in-memory session.SessionEngine for tests. It tracks sessions
+// in a map and exposes a channel callers push SessionEvents onto, mirroring the
+// real engine closely enough to exercise the dashboard's Update loop.
 type fakeEngine struct {
 	mu       sync.Mutex
-	sessions map[string]Session
+	sessions map[string]session.Session
 	order    []string
-	events   chan SessionEvent
+	events   chan session.SessionEvent
 
 	// call recorders so tests can assert lifecycle wiring.
-	started  []SessionSpec
+	started  []session.SessionSpec
 	stopped  []string
 	killed   []string
 	attached []string
@@ -27,25 +30,28 @@ type fakeEngine struct {
 	closed bool
 }
 
+// compile-time assertion that fakeEngine satisfies the real engine contract.
+var _ session.SessionEngine = (*fakeEngine)(nil)
+
 func newFakeEngine() *fakeEngine {
 	return &fakeEngine{
-		sessions: make(map[string]Session),
-		events:   make(chan SessionEvent, 16),
+		sessions: make(map[string]session.Session),
+		events:   make(chan session.SessionEvent, 16),
 		captures: make(map[string]string),
 	}
 }
 
-func (e *fakeEngine) Start(spec SessionSpec) (Session, error) {
+func (e *fakeEngine) Start(spec session.SessionSpec) (session.Session, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.started = append(e.started, spec)
 	e.nextID++
 	id := fmt.Sprintf("sess-%d", e.nextID)
-	s := Session{
+	s := session.Session{
 		ID:        id,
 		ProjectID: spec.ProjectID,
 		AccountID: spec.AccountID,
-		State:     SessionStarting,
+		State:     session.StateStarting,
 		StartedAt: time.Now(),
 	}
 	e.sessions[id] = s
@@ -58,7 +64,7 @@ func (e *fakeEngine) Stop(id string) error {
 	defer e.mu.Unlock()
 	e.stopped = append(e.stopped, id)
 	if s, ok := e.sessions[id]; ok {
-		s.State = SessionExited
+		s.State = session.StateExited
 		e.sessions[id] = s
 	}
 	return nil
@@ -78,10 +84,10 @@ func (e *fakeEngine) Kill(id string) error {
 	return nil
 }
 
-func (e *fakeEngine) List() []Session {
+func (e *fakeEngine) List() []session.Session {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	out := make([]Session, 0, len(e.order))
+	out := make([]session.Session, 0, len(e.order))
 	for _, id := range e.order {
 		if s, ok := e.sessions[id]; ok {
 			out = append(out, s)
@@ -109,7 +115,7 @@ func (e *fakeEngine) Capture(id string) (string, error) {
 	return "", nil
 }
 
-func (e *fakeEngine) Events() <-chan SessionEvent { return e.events }
+func (e *fakeEngine) Events() <-chan session.SessionEvent { return e.events }
 
 func (e *fakeEngine) Close() error {
 	e.mu.Lock()
@@ -122,12 +128,12 @@ func (e *fakeEngine) Close() error {
 }
 
 // push enqueues a SessionEvent for the dashboard's subscription to read.
-func (e *fakeEngine) push(ev SessionEvent) {
+func (e *fakeEngine) push(ev session.SessionEvent) {
 	e.events <- ev
 }
 
 // seed inserts a session directly (bypassing Start) for list-rendering tests.
-func (e *fakeEngine) seed(s Session) {
+func (e *fakeEngine) seed(s session.Session) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if _, ok := e.sessions[s.ID]; !ok {
@@ -138,14 +144,14 @@ func (e *fakeEngine) seed(s Session) {
 
 // fakeServices builds a scripted set of bound services plus their statuses for
 // rendering/probe tests.
-func fakeServices() ([]Service, map[string]ServiceStatus) {
-	svcs := []Service{
+func fakeServices() ([]config.Service, map[string]config.ServiceStatus) {
+	svcs := []config.Service{
 		{ID: "github", Label: "GitHub", Category: "vcs", Enabled: true},
 		{ID: "railway", Label: "Railway", Category: "deploy", Enabled: true},
 	}
-	statuses := map[string]ServiceStatus{
-		"github":  {ServiceID: "github", State: StatusAuthed, CheckedAt: time.Now()},
-		"railway": {ServiceID: "railway", State: StatusConfigured, CheckedAt: time.Now()},
+	statuses := map[string]config.ServiceStatus{
+		"github":  {ServiceID: "github", State: config.StatusAuthed, CheckedAt: time.Now()},
+		"railway": {ServiceID: "railway", State: config.StatusConfigured, CheckedAt: time.Now()},
 	}
 	return svcs, statuses
 }

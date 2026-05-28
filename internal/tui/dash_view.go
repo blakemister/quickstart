@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bcmister/qs/internal/config"
+	"github.com/bcmister/qs/internal/session"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -101,7 +103,7 @@ func (m DashboardModel) renderProjectsColumn(w, h int) string {
 		rows = 1
 	}
 	for i := 0; i < rows && i < len(m.projects); i++ {
-		name := m.projects[i].Name
+		name := m.projects[i].name
 		if i == m.projectCur {
 			b.WriteString(selectedRow(name, focused))
 		} else {
@@ -146,8 +148,8 @@ func (m DashboardModel) renderContextColumn(w, h int) string {
 	var b strings.Builder
 
 	docTitle := "Context"
-	if m.viewer != nil && m.viewer.Title() != "" {
-		docTitle = "Context: " + m.viewer.Title()
+	if m.viewer != nil && m.contextTitle != "" {
+		docTitle = "Context: " + m.contextTitle
 	}
 	b.WriteString(columnTitle(docTitle, focused))
 	b.WriteString("\n")
@@ -176,7 +178,7 @@ func (m DashboardModel) renderContextColumn(w, h int) string {
 func (m DashboardModel) renderServiceDots() string {
 	parts := make([]string, 0, len(m.boundServices))
 	for _, svc := range m.boundServices {
-		state := StatusUnknown
+		state := config.StatusUnknown
 		if st, ok := m.serviceStatus[svc.ID]; ok {
 			state = st.State
 		}
@@ -245,33 +247,34 @@ func columnBox(content string, w, h int, focused bool) string {
 	return style.Render(content)
 }
 
-// sessionStateDot maps a SessionState to a colored status glyph.
-func sessionStateDot(state SessionState) string {
+// sessionStateDot maps a session.SessionState to a colored status glyph.
+func sessionStateDot(state session.SessionState) string {
 	switch state {
-	case SessionRunning:
+	case session.StateRunning:
 		return SuccessStyle.Render("●")
-	case SessionStarting:
+	case session.StateStarting:
 		return WarningStyle.Render("◐")
-	case SessionIdle:
+	case session.StateIdle:
 		return DimStyle.Render("○")
-	case SessionError:
+	case session.StateError:
 		return ErrorStyle.Render("✕")
-	case SessionExited:
+	case session.StateExited:
 		return DimStyle.Render("✓")
 	default:
 		return DimStyle.Render("○")
 	}
 }
 
-// statusStateDot maps a StatusState to a colored status glyph per the locked UX:
-// Authed/Reachable green ●, Configured yellow ◐, Unknown dim ○, Error red ✕.
-func statusStateDot(state StatusState) string {
+// statusStateDot maps a config.StatusState to a colored status glyph per the
+// locked UX: Authed/Reachable green ●, Configured yellow ◐, Unknown dim ○,
+// Error red ✕.
+func statusStateDot(state config.StatusState) string {
 	switch state {
-	case StatusAuthed, StatusReachable:
+	case config.StatusAuthed, config.StatusReachable:
 		return SuccessStyle.Render("●")
-	case StatusConfigured:
+	case config.StatusConfigured:
 		return WarningStyle.Render("◐")
-	case StatusError:
+	case config.StatusError:
 		return ErrorStyle.Render("✕")
 	default: // StatusUnknown
 		return DimStyle.Render("○")
