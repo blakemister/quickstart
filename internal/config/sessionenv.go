@@ -193,7 +193,7 @@ func ResolveSessionEnv(cfg *Config, keys AccountKeys, projectID, accountID strin
 
 	// Profile layers (secrets, config dirs, git identity).
 	if project != nil && project.Profile != "" {
-		profile := ProfileByID(cfg.Profiles, project.Profile)
+		profile := ProfileByID(cfg, project.Profile)
 		applyProfileLayers(layer, keys, profile)
 	}
 
@@ -227,7 +227,7 @@ func ResolveProfileEnv(cfg *Config, keys AccountKeys, projectID string) ([]strin
 			return nil, fmt.Errorf("resolve profile env: unknown project %q", projectID)
 		}
 		if project.Profile != "" {
-			profile := ProfileByID(cfg.Profiles, project.Profile)
+			profile := ProfileByID(cfg, project.Profile)
 			applyProfileLayers(layer, keys, profile)
 		}
 	}

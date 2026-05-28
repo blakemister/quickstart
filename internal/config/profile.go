@@ -26,10 +26,13 @@ type Profile struct {
 }
 
 // ProfileByID finds a profile by ID, returning nil if not found.
-func ProfileByID(profiles []Profile, id string) *Profile {
-	for i := range profiles {
-		if profiles[i].ID == id {
-			return &profiles[i]
+func ProfileByID(cfg *Config, id string) *Profile {
+	if cfg == nil {
+		return nil
+	}
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].ID == id {
+			return &cfg.Profiles[i]
 		}
 	}
 	return nil

@@ -132,7 +132,7 @@ func TestEnsureDefaultsPreservesUserGitIdentity(t *testing.T) {
 	}
 	EnsureDefaults(cfg)
 
-	work := ProfileByID(cfg.Profiles, "work")
+	work := ProfileByID(cfg, "work")
 	if work == nil {
 		t.Fatal("expected work profile to survive")
 	}
@@ -185,61 +185,69 @@ func TestValidateProjectRefsDropsDangling(t *testing.T) {
 
 // TestProjectForPath verifies path binding lookup and the unbound (nil) case.
 func TestProjectForPath(t *testing.T) {
-	projects := []Project{
-		{ID: "a", Path: "C:/dev/a"},
-		{ID: "b", Path: "C:/dev/b"},
+	cfg := &Config{
+		Projects: []Project{
+			{ID: "a", Path: "C:/dev/a"},
+			{ID: "b", Path: "C:/dev/b"},
+		},
 	}
 
-	if p := ProjectForPath(projects, "C:/dev/a"); p == nil || p.ID != "a" {
+	if p := ProjectForPath(cfg, "C:/dev/a"); p == nil || p.ID != "a" {
 		t.Errorf("expected project a, got %v", p)
 	}
 	// Case-insensitive + cleaning.
-	if p := ProjectForPath(projects, "c:/dev/./b/"); p == nil || p.ID != "b" {
+	if p := ProjectForPath(cfg, "c:/dev/./b/"); p == nil || p.ID != "b" {
 		t.Errorf("expected project b for messy path, got %v", p)
 	}
-	if p := ProjectForPath(projects, "C:/dev/unbound"); p != nil {
+	if p := ProjectForPath(cfg, "C:/dev/unbound"); p != nil {
 		t.Errorf("expected nil for unbound path, got %v", p)
 	}
-	if p := ProjectForPath(projects, ""); p != nil {
+	if p := ProjectForPath(cfg, ""); p != nil {
 		t.Errorf("expected nil for empty path, got %v", p)
 	}
 }
 
 // TestProfileAndServiceByID covers the basic lookup helpers.
 func TestProfileAndServiceByID(t *testing.T) {
-	profiles := []Profile{{ID: "x"}, {ID: "y"}}
-	if ProfileByID(profiles, "y") == nil {
+	cfg := &Config{
+		Profiles: []Profile{{ID: "x"}, {ID: "y"}},
+		Services: []Service{{ID: "s1"}, {ID: "s2"}},
+	}
+	if ProfileByID(cfg, "y") == nil {
 		t.Error("expected to find profile y")
 	}
-	if ProfileByID(profiles, "z") != nil {
+	if ProfileByID(cfg, "z") != nil {
 		t.Error("expected nil for unknown profile")
 	}
 
-	services := []Service{{ID: "s1"}, {ID: "s2"}}
-	if ServiceByID(services, "s1") == nil {
+	if ServiceByID(cfg, "s1") == nil {
 		t.Error("expected to find service s1")
 	}
-	if ServiceByID(services, "s3") != nil {
+	if ServiceByID(cfg, "s3") != nil {
 		t.Error("expected nil for unknown service")
 	}
 }
 
 // TestServicesForProject resolves service IDs, skipping unresolved ones.
 func TestServicesForProject(t *testing.T) {
-	services := []Service{
-		{ID: "jira", Label: "Jira"},
-		{ID: "railway", Label: "Railway"},
+	cfg := &Config{
+		Services: []Service{
+			{ID: "jira", Label: "Jira"},
+			{ID: "railway", Label: "Railway"},
+		},
+		Projects: []Project{
+			{ID: "p", Services: []string{"railway", "ghost", "jira"}},
+		},
 	}
-	p := &Project{Services: []string{"railway", "ghost", "jira"}}
-	got := ServicesForProject(p, services)
+	got := ServicesForProject(cfg, "p")
 	if len(got) != 2 {
 		t.Fatalf("expected 2 resolved services, got %d", len(got))
 	}
 	if got[0].ID != "railway" || got[1].ID != "jira" {
 		t.Errorf("expected order preserved [railway, jira], got [%s, %s]", got[0].ID, got[1].ID)
 	}
-	if ServicesForProject(nil, services) != nil {
-		t.Error("expected nil for nil project")
+	if ServicesForProject(cfg, "missing") != nil {
+		t.Error("expected nil for unknown project")
 	}
 }
 

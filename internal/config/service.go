@@ -49,10 +49,13 @@ type ServiceStatus struct {
 }
 
 // ServiceByID finds a service by ID, returning nil if not found.
-func ServiceByID(services []Service, id string) *Service {
-	for i := range services {
-		if services[i].ID == id {
-			return &services[i]
+func ServiceByID(cfg *Config, id string) *Service {
+	if cfg == nil {
+		return nil
+	}
+	for i := range cfg.Services {
+		if cfg.Services[i].ID == id {
+			return &cfg.Services[i]
 		}
 	}
 	return nil

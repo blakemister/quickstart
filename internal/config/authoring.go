@@ -14,7 +14,7 @@ func AddProfile(cfg *Config, p Profile) error {
 	if p.ID == "" {
 		return fmt.Errorf("add profile: id cannot be empty")
 	}
-	if ProfileByID(cfg.Profiles, p.ID) != nil {
+	if ProfileByID(cfg, p.ID) != nil {
 		return fmt.Errorf("add profile: id %q already exists", p.ID)
 	}
 	cfg.Profiles = append(cfg.Profiles, p)
@@ -29,7 +29,7 @@ func AddService(cfg *Config, s Service) error {
 	if s.ID == "" {
 		return fmt.Errorf("add service: id cannot be empty")
 	}
-	if ServiceByID(cfg.Services, s.ID) != nil {
+	if ServiceByID(cfg, s.ID) != nil {
 		return fmt.Errorf("add service: id %q already exists", s.ID)
 	}
 	cfg.Services = append(cfg.Services, s)
@@ -48,7 +48,7 @@ func AddProject(cfg *Config, p Project) error {
 	if ProjectByID(cfg.Projects, p.ID) != nil {
 		return fmt.Errorf("add project: id %q already exists", p.ID)
 	}
-	if p.Profile != "" && ProfileByID(cfg.Profiles, p.Profile) == nil {
+	if p.Profile != "" && ProfileByID(cfg, p.Profile) == nil {
 		return fmt.Errorf("add project: unknown profile %q", p.Profile)
 	}
 	for _, id := range p.Accounts {
@@ -60,7 +60,7 @@ func AddProject(cfg *Config, p Project) error {
 		return fmt.Errorf("add project: unknown default account %q", p.DefaultAccount)
 	}
 	for _, id := range p.Services {
-		if ServiceByID(cfg.Services, id) == nil {
+		if ServiceByID(cfg, id) == nil {
 			return fmt.Errorf("add project: unknown service %q", id)
 		}
 	}

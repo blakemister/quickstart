@@ -31,28 +31,36 @@ func ProjectByID(projects []Project, id string) *Project {
 // ProjectForPath returns the project whose Path matches the given filesystem
 // path (compared case-insensitively after cleaning, matching Windows
 // semantics). Returns nil when the path is unbound to any project.
-func ProjectForPath(projects []Project, path string) *Project {
+func ProjectForPath(cfg *Config, path string) *Project {
+	if cfg == nil {
+		return nil
+	}
 	target := normalizePath(path)
 	if target == "" {
 		return nil
 	}
-	for i := range projects {
-		if normalizePath(projects[i].Path) == target {
-			return &projects[i]
+	for i := range cfg.Projects {
+		if normalizePath(cfg.Projects[i].Path) == target {
+			return &cfg.Projects[i]
 		}
 	}
 	return nil
 }
 
 // ServicesForProject resolves a project's service IDs to Service values,
-// skipping any IDs that do not resolve.
-func ServicesForProject(p *Project, services []Service) []Service {
+// skipping any IDs that do not resolve. Returns nil when the project is not
+// found.
+func ServicesForProject(cfg *Config, projectID string) []Service {
+	if cfg == nil {
+		return nil
+	}
+	p := ProjectByID(cfg.Projects, projectID)
 	if p == nil {
 		return nil
 	}
 	var result []Service
 	for _, id := range p.Services {
-		if svc := ServiceByID(services, id); svc != nil {
+		if svc := ServiceByID(cfg, id); svc != nil {
 			result = append(result, *svc)
 		}
 	}
