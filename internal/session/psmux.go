@@ -138,6 +138,11 @@ func (e *PsmuxEngine) Start(spec SessionSpec) (Session, error) {
 	if err != nil {
 		return Session{}, fmt.Errorf("start %s/%s: resolve launch: %w", spec.ProjectID, spec.AccountID, err)
 	}
+	// For an unbound folder the resolver supplies no dir; fall back to the
+	// caller-provided working dir so the session still launches in the folder.
+	if dir == "" {
+		dir = spec.WorkingDir
+	}
 	if command == "" {
 		return Session{}, fmt.Errorf("start %s/%s: resolver returned empty command", spec.ProjectID, spec.AccountID)
 	}

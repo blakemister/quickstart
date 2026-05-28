@@ -357,22 +357,35 @@ func (m DashboardModel) navDown() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// startSelected starts a session for the selected project using the configured
-// default account.
+// startSelected starts a session for the highlighted folder. It resolves the
+// folder PATH to a bound config.Project (so the project's profile/firewall and
+// account binding are applied) and falls back to a clean unbound launch when the
+// folder is not bound to any project.
 func (m *DashboardModel) startSelected() tea.Cmd {
 	if m.engine == nil {
 		return nil
 	}
-	projectID := m.selectedProjectID()
-	if projectID == "" {
+	path := m.selectedProjectPath()
+	if path == "" {
 		return nil
 	}
-	accountID := m.cfg.DefaultAccount
+
+	proj := config.ProjectForPath(m.cfg, path)
+
+	accountID := chooseAccount(proj, m.cfg)
 	if accountID == "" {
-		accountID = m.cfg.LastAccount
+		m.statusMsg = "no account configured"
+		m.statusErr = true
+		return nil
 	}
+
+	projectID := ""
+	if proj != nil {
+		projectID = proj.ID
+	}
+
 	engine := m.engine
-	spec := session.SessionSpec{ProjectID: projectID, AccountID: accountID}
+	spec := session.SessionSpec{ProjectID: projectID, AccountID: accountID, WorkingDir: path}
 	return func() tea.Msg {
 		s, err := engine.Start(spec)
 		if err != nil {
@@ -380,6 +393,30 @@ func (m *DashboardModel) startSelected() tea.Cmd {
 		}
 		return sessionEventMsg{event: session.SessionEvent{Kind: session.EventStarted, Session: s}}
 	}
+}
+
+// chooseAccount selects the account ID to launch for the given (possibly nil)
+// project. A bound project prefers its own binding — DefaultAccount when it is
+// set and listed in the project's Accounts, otherwise the first listed account —
+// before falling back to the global default/last account. An unbound folder uses
+// the global default/last account only. Returns "" when nothing is configured.
+func chooseAccount(proj *config.Project, cfg *config.Config) string {
+	if proj != nil {
+		if proj.DefaultAccount != "" {
+			for _, id := range proj.Accounts {
+				if id == proj.DefaultAccount {
+					return proj.DefaultAccount
+				}
+			}
+		}
+		if len(proj.Accounts) > 0 {
+			return proj.Accounts[0]
+		}
+	}
+	if cfg.DefaultAccount != "" {
+		return cfg.DefaultAccount
+	}
+	return cfg.LastAccount
 }
 
 // stopSelected stops the focused session.

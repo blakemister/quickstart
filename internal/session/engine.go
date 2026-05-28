@@ -53,6 +53,9 @@ type Session struct {
 type SessionSpec struct {
 	ProjectID string
 	AccountID string
+	// WorkingDir is an optional working dir used when the resolver returns no
+	// dir, e.g. an unbound folder; ignored if the resolver supplies a dir.
+	WorkingDir string
 }
 
 // SessionEventKind discriminates the kinds of events an engine emits.

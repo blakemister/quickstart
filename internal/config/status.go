@@ -1,10 +1,16 @@
 package config
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// statusProbeTimeout bounds how long a StatusCmd may run before it is treated
+// as an error. A hung probe must never wedge the dashboard. It is a var (not a
+// const) so tests can shorten it.
+var statusProbeTimeout = 5 * time.Second
 
 // envHasKey reports whether the given env (a []string of KEY=VALUE) contains the
 // named variable, matched case-insensitively (Windows semantics) and treated as
@@ -71,10 +77,23 @@ func ProbeServiceStatus(svc Service, env []string) ServiceStatus {
 		return status
 	}
 
-	parts := strings.Fields(statusCmd)
-	c := exec.Command(parts[0], parts[1:]...)
+	parts := splitCommand(statusCmd)
+	if len(parts) == 0 {
+		return status
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), statusProbeTimeout)
+	defer cancel()
+
+	c := exec.CommandContext(ctx, parts[0], parts[1:]...)
 	c.Env = env // firewall env only — never os.Environ()
-	if err := c.Run(); err != nil {
+	err := c.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		status.State = StatusError
+		status.Detail = "probe timed out"
+		return status
+	}
+	if err != nil {
 		status.State = StatusError
 		status.Detail = err.Error()
 		return status
@@ -83,4 +102,38 @@ func ProbeServiceStatus(svc Service, env []string) ServiceStatus {
 	status.State = StatusReachable
 	status.Detail = ""
 	return status
+}
+
+// splitCommand tokenizes a command string, treating a double-quoted run as a
+// single token so paths/args with spaces survive (e.g.
+// `"C:/Program Files/x/p.exe" --flag "a b"` => three tokens). It is NOT a full
+// shell parser: it only honors double quotes and splits on unquoted whitespace.
+func splitCommand(s string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inQuote := false
+	hasToken := false
+
+	flush := func() {
+		if hasToken {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+			hasToken = false
+		}
+	}
+
+	for _, r := range s {
+		switch {
+		case r == '"':
+			inQuote = !inQuote
+			hasToken = true // an empty "" is still a (empty) token
+		case !inQuote && (r == ' ' || r == '\t' || r == '\n' || r == '\r'):
+			flush()
+		default:
+			cur.WriteRune(r)
+			hasToken = true
+		}
+	}
+	flush()
+	return tokens
 }

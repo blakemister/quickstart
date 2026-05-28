@@ -70,7 +70,10 @@ func EnsureSwarmShell() error {
 }
 
 // findGitBash locates the Git Bash executable. It checks the canonical install
-// path first, then falls back to "where bash". It returns a clear, actionable
+// path first, then falls back to a PATH lookup. The WSL bash.exe shim (which
+// lives in %WINDIR%\System32 and cannot run the spawned tools) is explicitly
+// rejected, so when the only bash on PATH is the WSL shim this returns the same
+// "not found" error as having no bash at all. It returns a clear, actionable
 // error if Git Bash is not found.
 func findGitBash() (string, error) {
 	if fileExists(gitBashDefaultPath) {
@@ -78,12 +81,7 @@ func findGitBash() (string, error) {
 	}
 
 	// Fall back to PATH lookup. exec.LookPath honors PATHEXT and PATH.
-	if p, err := exec.LookPath("bash"); err == nil {
-		// Guard against WSL's bash.exe shim, which is not Git Bash and cannot run
-		// the spawned tools the same way. Prefer a path that looks like Git.
-		if strings.Contains(strings.ToLower(p), `\git\`) || fileExists(p) {
-			return p, nil
-		}
+	if p, err := exec.LookPath("bash"); err == nil && !isWSLBashShim(p) {
 		return p, nil
 	}
 
@@ -91,6 +89,19 @@ func findGitBash() (string, error) {
 		"ensure swarm shell: Git Bash not found at %q and 'bash' is not on PATH; "+
 			"install Git for Windows (https://git-scm.com/download/win) so psmux can spawn agent-team panes",
 		gitBashDefaultPath)
+}
+
+// isWSLBashShim reports whether the resolved bash path is the WSL launcher shim
+// rather than real Git Bash. The shim is %WINDIR%\System32\bash.exe; we match it
+// case-insensitively, either by its System32 directory or by a System32-rooted
+// bash.exe basename, so it is never selected as the swarm shell.
+func isWSLBashShim(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(path))
+	if strings.Contains(lower, "/windows/system32/") {
+		return true
+	}
+	// Defensive: a bare System32 reference even without the windows/ prefix.
+	return filepath.Base(lower) == "bash.exe" && strings.Contains(lower, "system32/")
 }
 
 // psmuxConfPath returns the path to the user's psmux config file (~/.psmux.conf).

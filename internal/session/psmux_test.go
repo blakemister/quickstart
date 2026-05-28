@@ -207,6 +207,53 @@ func TestStartDoesNotReadOSEnviron(t *testing.T) {
 	}
 }
 
+// TestStartUsesSpecWorkingDirWhenResolverHasNoDir verifies the unbound-folder
+// path: when the resolver returns an empty dir (unbound project), Start falls
+// back to spec.WorkingDir for both new-session -c and the launch cd.
+func TestStartUsesSpecWorkingDirWhenResolverHasNoDir(t *testing.T) {
+	r := &fakeRunner{}
+	// Resolver returns NO dir (empty), mimicking an unbound project.
+	e := newTestEngine(t, r, fixedResolver([]string{"PATH=C:/clean"}, "claude", nil, ""))
+
+	s, err := e.Start(SessionSpec{ProjectID: "", AccountID: "claude", WorkingDir: "C:/folder"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	create := r.findCall("new-session")
+	wantCreate := []string{"new-session", "-d", "-s", s.PsmuxSession, "-c", "C:/folder"}
+	if !equalArgs(create, wantCreate) {
+		t.Fatalf("new-session args:\n got %v\nwant %v", create, wantCreate)
+	}
+
+	launch := r.findCall("send-keys")
+	if launch == nil {
+		t.Fatal("no send-keys (launch) call recorded")
+	}
+	line := launch[len(launch)-2]
+	if !strings.Contains(line, "C:/folder") {
+		t.Fatalf("launch line did not cd into spec.WorkingDir: %q", line)
+	}
+}
+
+// TestStartResolverDirWinsOverSpecWorkingDir verifies a bound project's resolved
+// dir takes precedence over any spec.WorkingDir fallback.
+func TestStartResolverDirWinsOverSpecWorkingDir(t *testing.T) {
+	r := &fakeRunner{}
+	e := newTestEngine(t, r, fixedResolver([]string{"PATH=C:/clean"}, "claude", nil, "C:/resolved"))
+
+	s, err := e.Start(SessionSpec{ProjectID: "bound", AccountID: "claude", WorkingDir: "C:/folder"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	create := r.findCall("new-session")
+	wantCreate := []string{"new-session", "-d", "-s", s.PsmuxSession, "-c", "C:/resolved"}
+	if !equalArgs(create, wantCreate) {
+		t.Fatalf("new-session args:\n got %v\nwant %v", create, wantCreate)
+	}
+}
+
 func TestStopArgsAndSyncExitEvent(t *testing.T) {
 	r := &fakeRunner{}
 	e := newTestEngine(t, r, fixedResolver([]string{"PATH=x"}, "claude", nil, ""))

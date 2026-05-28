@@ -6,6 +6,38 @@ import (
 	"testing"
 )
 
+func TestIsReservedAccountID(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{"claude", false},
+		{"ama-claude", false},
+		{"profile", false}, // no colon: not the namespace
+		{"profile:ama", true},
+		{"profile:", true},
+		{ProfileKeyPrefix + "anything", true},
+	}
+	for _, tt := range tests {
+		if got := IsReservedAccountID(tt.id); got != tt.want {
+			t.Errorf("IsReservedAccountID(%q) = %v, want %v", tt.id, got, tt.want)
+		}
+	}
+}
+
+// TestUniqueAccountIDNeverReserved ensures a label can never yield an ID that
+// collides with the profile-secret namespace.
+func TestUniqueAccountIDNeverReserved(t *testing.T) {
+	// A label that normalizes toward the reserved namespace must not produce a
+	// reserved ID (the colon is stripped, but guard regardless).
+	for _, label := range []string{"profile:secret", "Profile: AMA", "profile"} {
+		id := UniqueAccountID(label, nil)
+		if IsReservedAccountID(id) {
+			t.Errorf("UniqueAccountID(%q) = %q, which is reserved", label, id)
+		}
+	}
+}
+
 func TestAuthStatusCmds_HasClaude(t *testing.T) {
 	cmd, ok := AuthStatusCmds["claude"]
 	if !ok {

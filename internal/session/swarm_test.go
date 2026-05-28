@@ -36,6 +36,55 @@ func countDefaultShellLines(conf string) int {
 	return n
 }
 
+func TestIsWSLBashShim(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"git bash", `C:\Program Files\Git\bin\bash.exe`, false},
+		{"git bash forward slash", "C:/Program Files/Git/bin/bash.exe", false},
+		{"wsl shim system32", `C:\Windows\System32\bash.exe`, true},
+		{"wsl shim lowercase", `c:\windows\system32\bash.exe`, true},
+		{"wsl shim forward slash", "C:/Windows/System32/bash.exe", true},
+		{"unrelated bash", `D:\tools\bash.exe`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isWSLBashShim(tt.path); got != tt.want {
+				t.Errorf("isWSLBashShim(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFindGitBashRejectsWSLShim verifies that when Git Bash is not at its
+// canonical path and the only bash on PATH is the WSL System32 shim, findGitBash
+// returns the "not found" error rather than selecting the shim.
+func TestFindGitBashRejectsWSLShim(t *testing.T) {
+	if fileExists(gitBashDefaultPath) {
+		t.Skip("real Git Bash present at canonical path; cannot exercise the PATH fallback")
+	}
+
+	// Build a fake System32 dir containing only a bash.exe shim and put it on a
+	// PATH that contains nothing else providing bash.
+	dir := t.TempDir()
+	sys32 := filepath.Join(dir, "Windows", "System32")
+	if err := os.MkdirAll(sys32, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	shim := filepath.Join(sys32, "bash.exe")
+	if err := os.WriteFile(shim, []byte("shim"), 0o755); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+	t.Setenv("PATH", sys32)
+	t.Setenv("PATHEXT", ".EXE")
+
+	if _, err := findGitBash(); err == nil {
+		t.Fatal("findGitBash selected the WSL shim; expected a not-found error")
+	}
+}
+
 func TestEnsureSwarmShellCreatesConf(t *testing.T) {
 	if !fileExists(gitBashDefaultPath) {
 		t.Skip("Git Bash not installed at default path; skipping real swarm-shell test")

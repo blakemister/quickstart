@@ -214,7 +214,12 @@ func TestDashboardSessionEventReissuesSubscription(t *testing.T) {
 }
 
 func TestDashboardStartIssuesEngineStart(t *testing.T) {
-	m, eng, _ := newTestDashboard(t, "alpha")
+	m, eng, root := newTestDashboard(t, "alpha")
+	// Bind the alpha folder so the start carries its project ID (resolved by
+	// path, not by folder name).
+	m.cfg.Projects = []config.Project{
+		{ID: "alpha", Path: filepath.Join(root, "alpha"), Accounts: []string{"claude"}},
+	}
 	m.focus = projectsPane
 
 	_, cmd := m.Update(runeKey('s'))
@@ -231,6 +236,66 @@ func TestDashboardStartIssuesEngineStart(t *testing.T) {
 	}
 	if len(eng.started) != 1 || eng.started[0].ProjectID != "alpha" {
 		t.Fatalf("engine.Start not called for alpha: %+v", eng.started)
+	}
+}
+
+// TestDashboardStartBoundProjectUsesProjectBinding locks Fix 1/2: starting a
+// session for a folder that is BOUND to a config.Project (matched by path) must
+// pass the project's ID, the project's account, and the folder's working dir to
+// the engine — not the folder name and not the global default account.
+func TestDashboardStartBoundProjectUsesProjectBinding(t *testing.T) {
+	m, eng, root := newTestDashboard(t, "ama-app")
+	path := filepath.Join(root, "ama-app")
+	m.cfg.Projects = []config.Project{
+		{
+			ID:             "ama-app",
+			Path:           path,
+			Profile:        "ama",
+			Accounts:       []string{"ama-claude"},
+			DefaultAccount: "ama-claude",
+		},
+	}
+	m.focus = projectsPane
+
+	_, cmd := m.Update(runeKey('s'))
+	if cmd == nil {
+		t.Fatal("'s' produced no Cmd")
+	}
+	cmd() // executing the Cmd triggers engine.Start
+
+	if len(eng.started) != 1 {
+		t.Fatalf("expected exactly one Start, got %d: %+v", len(eng.started), eng.started)
+	}
+	got := eng.started[0]
+	want := session.SessionSpec{ProjectID: "ama-app", AccountID: "ama-claude", WorkingDir: path}
+	if got != want {
+		t.Fatalf("bound start spec = %+v, want %+v", got, want)
+	}
+}
+
+// TestDashboardStartUnboundFolderCleanLaunch covers the unbound case: a folder
+// not bound to any project launches with an empty ProjectID (clean firewall),
+// the global default account, and the folder path as the working dir.
+func TestDashboardStartUnboundFolderCleanLaunch(t *testing.T) {
+	m, eng, root := newTestDashboard(t, "loose")
+	path := filepath.Join(root, "loose")
+	// No m.cfg.Projects bindings: the folder is unbound. cfg.DefaultAccount is
+	// "claude" (set by newTestDashboard).
+	m.focus = projectsPane
+
+	_, cmd := m.Update(runeKey('s'))
+	if cmd == nil {
+		t.Fatal("'s' produced no Cmd")
+	}
+	cmd()
+
+	if len(eng.started) != 1 {
+		t.Fatalf("expected exactly one Start, got %d: %+v", len(eng.started), eng.started)
+	}
+	got := eng.started[0]
+	want := session.SessionSpec{ProjectID: "", AccountID: "claude", WorkingDir: path}
+	if got != want {
+		t.Fatalf("unbound start spec = %+v, want %+v", got, want)
 	}
 }
 

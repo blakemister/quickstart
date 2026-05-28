@@ -1,9 +1,23 @@
 package config
 
 import (
+	"os"
 	"runtime"
 	"testing"
+	"time"
 )
+
+// statusProbeTimeoutForTest sets the probe timeout to d and returns a restore
+// func that reverts it.
+func statusProbeTimeoutForTest(d time.Duration) (restore func()) {
+	prev := statusProbeTimeout
+	statusProbeTimeout = d
+	return func() { statusProbeTimeout = prev }
+}
+
+// osPath returns the host PATH so a probe can resolve real executables (e.g.
+// ping) in tests that intentionally exercise the timeout path.
+func osPath() string { return os.Getenv("PATH") }
 
 // exitCmd returns a shell command string that exits with the given code,
 // portable across the host the tests run on.
@@ -35,6 +49,58 @@ func TestExpectedKeysPresent(t *testing.T) {
 				t.Errorf("ExpectedKeysPresent = (%d, %d), want (%d, %d)", have, total, tt.wantHave, tt.wantTotal)
 			}
 		})
+	}
+}
+
+func TestSplitCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"empty", "", nil},
+		{"simple", "claude auth status", []string{"claude", "auth", "status"}},
+		{
+			"quoted path and arg with spaces",
+			`"C:/Program Files/x/p.exe" --flag "a b"`,
+			[]string{"C:/Program Files/x/p.exe", "--flag", "a b"},
+		},
+		{"collapses runs of whitespace", "a   b\t c", []string{"a", "b", "c"}},
+		{"empty quoted token", `cmd ""`, []string{"cmd", ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitCommand(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitCommand(%q) = %#v, want %#v", tt.in, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("splitCommand(%q)[%d] = %q, want %q", tt.in, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestProbeServiceStatusTimesOut verifies a hung StatusCmd is reported as a
+// timeout error rather than wedging the probe. It temporarily shortens the
+// timeout so the test stays fast.
+func TestProbeServiceStatusTimesOut(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("timeout stub uses Windows ping; project is Windows-only")
+	}
+	prev := statusProbeTimeoutForTest(100 * time.Millisecond)
+	defer prev()
+
+	// ping -n 30 sleeps ~30s; the 100ms timeout must fire first.
+	svc := Service{ID: "slow", StatusCmd: "ping -n 30 127.0.0.1"}
+	got := ProbeServiceStatus(svc, []string{"PATH=" + osPath()})
+	if got.State != StatusError {
+		t.Fatalf("state = %d, want StatusError", got.State)
+	}
+	if got.Detail != "probe timed out" {
+		t.Fatalf("detail = %q, want \"probe timed out\"", got.Detail)
 	}
 }
 
