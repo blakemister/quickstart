@@ -34,6 +34,7 @@ func init() {
 	rootCmd.AddCommand(monitorsCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(allCmd)
+	rootCmd.AddCommand(dashCmd)
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {
